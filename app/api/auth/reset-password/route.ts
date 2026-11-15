@@ -1,0 +1,15 @@
+import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
+
+export async function POST() {
+  return NextResponse.json(
+    {
+      data: null,
+      error: {
+        message: '邮箱找回密码已下线，请使用手机号登录后在个人中心修改密码',
+      },
+    },
+    { status: 410 }
+  );
+}

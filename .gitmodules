@@ -1,0 +1,4 @@
+[submodule "WeChat"]
+	path = WeChat
+	url = https://github.com/2326815976/photo-wechat.git
+	branch = new

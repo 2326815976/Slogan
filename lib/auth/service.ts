@@ -1,0 +1,903 @@
+import 'server-only';
+
+import { randomUUID } from 'crypto';
+import { executeSQL } from '@/lib/cloudbase/sql-executor';
+import { normalizeChinaMobile } from '@/lib/utils/phone';
+import { hashPassword, verifyPassword } from './password';
+import { createSession, revokeSessionsByUserId } from './session-store';
+import { normalizeOptionalAuthText } from './text';
+import { AuthUser } from './types';
+
+const NOW_UTC8_EXPR = 'DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR)';
+const TODAY_UTC8_EXPR = 'DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR))';
+const WECHAT_MINI_DEFAULT_NAME = '拾光者';
+const WECHAT_MINI_EMAIL_DOMAIN = 'wechat.miniprogram.local';
+const WECHAT_MINI_LEGACY_DEFAULT_NAMES = new Set(['微信用户', WECHAT_MINI_DEFAULT_NAME]);
+
+interface WechatMiniProgramSessionPayload {
+  openid?: string;
+  unionid?: string;
+  errcode?: number;
+  errmsg?: string;
+}
+
+function isWechatMiniDefaultName(input: string | null | undefined): boolean {
+  const normalized = normalizeOptionalAuthText(input) || '';
+  return !normalized || WECHAT_MINI_LEGACY_DEFAULT_NAMES.has(normalized);
+}
+
+function normalizeWechatMiniNickName(input: string | null | undefined): string {
+  const normalized = normalizeOptionalAuthText(input) || '';
+  if (!normalized || isWechatMiniDefaultName(normalized)) {
+    return WECHAT_MINI_DEFAULT_NAME;
+  }
+  return normalized;
+}
+
+function normalizeEmail(input: string): string {
+  return input.trim().toLowerCase();
+}
+
+function normalizePhone(input: string): string {
+  return normalizeChinaMobile(input);
+}
+
+function isMissingColumnError(error: unknown, columnName: string): boolean {
+  const message = String(error instanceof Error ? error.message : error ?? '')
+    .trim()
+    .toLowerCase();
+  const normalizedColumn = String(columnName || '').trim().toLowerCase();
+  if (!message || !normalizedColumn) {
+    return false;
+  }
+
+  return (
+    message.includes(normalizedColumn) &&
+    (message.includes('unknown column') ||
+      message.includes('does not exist') ||
+      (message.includes('column') && message.includes('not found')))
+  );
+}
+
+function buildAuthUserSelect(includeDisabledField: boolean): string {
+  return `
+      SELECT
+        u.id,
+        u.email,
+        u.phone,
+        u.password_hash,
+        CASE
+          WHEN p.role = 'admin' AND u.role = 'admin' THEN 'admin'
+          ELSE 'user'
+        END AS role,
+        p.name,
+        p.avatar,
+        ${includeDisabledField ? 'COALESCE(u.is_disabled, 0)' : '0'} AS is_disabled
+      FROM users u
+      LEFT JOIN profiles p ON p.id = u.id
+  `;
+}
+
+async function executeAuthUserLookup(sqlWithDisabledField: string, sqlFallback: string, values: Record<string, unknown>) {
+  try {
+    return await executeSQL(sqlWithDisabledField, values);
+  } catch (error) {
+    if (isMissingColumnError(error, 'is_disabled')) {
+      return executeSQL(sqlFallback, values);
+    }
+    throw error;
+  }
+}
+
+function toAuthUser(row: Record<string, any>): AuthUser {
+  return {
+    id: String(row.id),
+    email: String(row.email ?? ''),
+    phone: normalizeOptionalAuthText(row.phone),
+    role: row.role === 'admin' ? 'admin' : 'user',
+    name: normalizeOptionalAuthText(row.name),
+    avatar: normalizeOptionalAuthText(row.avatar),
+  };
+}
+
+export async function findUserByEmail(email: string): Promise<Record<string, any> | null> {
+  const result = await executeAuthUserLookup(
+    `
+      ${buildAuthUserSelect(true)}
+      WHERE u.email = {{email}} AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    `
+      ${buildAuthUserSelect(false)}
+      WHERE u.email = {{email}} AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    {
+      email: normalizeEmail(email),
+    }
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function findUserByPhone(phone: string): Promise<Record<string, any> | null> {
+  const result = await executeAuthUserLookup(
+    `
+      ${buildAuthUserSelect(true)}
+      WHERE u.phone = {{phone}} AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    `
+      ${buildAuthUserSelect(false)}
+      WHERE u.phone = {{phone}} AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    {
+      phone: normalizePhone(phone),
+    }
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function findUserById(userId: string): Promise<Record<string, any> | null> {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return null;
+  }
+
+  const result = await executeAuthUserLookup(
+    `
+      ${buildAuthUserSelect(true)}
+      WHERE u.id = {{user_id}} AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    `
+      ${buildAuthUserSelect(false)}
+      WHERE u.id = {{user_id}} AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    {
+      user_id: normalizedUserId,
+    }
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function readLatestAuthUserById(userId: string, fallbackName?: string): Promise<AuthUser | null> {
+  const latestUser = await findUserById(userId);
+  if (!latestUser) {
+    return null;
+  }
+
+  return toAuthUser({
+    ...latestUser,
+    name: normalizeOptionalAuthText(latestUser.name) || normalizeWechatMiniNickName(fallbackName),
+  });
+}
+
+export async function updateUserProfile(
+  userId: string,
+  input: {
+    name?: string;
+    phone?: string | null;
+    wechat?: string | null;
+    avatar?: string | null;
+  }
+): Promise<{ user: AuthUser | null; error: string | null }> {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return {
+      user: null,
+      error: 'user_not_found',
+    };
+  }
+
+  const userRecord = await findUserById(normalizedUserId);
+  if (!userRecord) {
+    return {
+      user: null,
+      error: 'user_not_found',
+    };
+  }
+
+  const normalizedName = normalizeOptionalAuthText(input.name);
+  if (!normalizedName) {
+    return {
+      user: null,
+      error: 'name_required',
+    };
+  }
+
+  const normalizedPhone = normalizePhone(normalizeOptionalAuthText(input.phone) || '');
+  const nextPhone = normalizedPhone || null;
+  const nextWechat = normalizeOptionalAuthText(input.wechat);
+  const hasAvatarPatch = Object.prototype.hasOwnProperty.call(input, 'avatar');
+  const nextAvatar = hasAvatarPatch ? normalizeOptionalAuthText(input.avatar) : null;
+  const isWechatMiniUser = String(userRecord.email ?? '').trim().toLowerCase().endsWith(`@${WECHAT_MINI_EMAIL_DOMAIN}`);
+
+  const profileResult = await executeSQL(
+    `
+      SELECT id
+      FROM profiles
+      WHERE id = {{user_id}}
+      LIMIT 1
+    `,
+    { user_id: normalizedUserId }
+  );
+  const hasProfileRecord = profileResult.rows.length > 0;
+  const nextProfileRole = userRecord.role === 'admin' ? 'admin' : 'user';
+  const nextProfileEmail = userRecord.email ? String(userRecord.email) : null;
+
+  try {
+    if (hasProfileRecord) {
+      const setExpressions = ['name = {{name}}'];
+      const values: Record<string, unknown> = {
+        name: normalizedName,
+        user_id: normalizedUserId,
+      };
+
+      setExpressions.push('phone = {{phone}}', 'wechat = {{wechat}}');
+      values.phone = nextPhone;
+      values.wechat = nextWechat;
+
+      if (hasAvatarPatch && nextAvatar) {
+        setExpressions.push("avatar = COALESCE(NULLIF(avatar, ''), {{avatar}})");
+        values.avatar = nextAvatar;
+      }
+
+      await executeSQL(
+        `
+          UPDATE profiles
+          SET ${setExpressions.join(', ')}
+          WHERE id = {{user_id}}
+        `,
+        values
+      );
+    } else {
+      await executeSQL(
+        `
+          INSERT INTO profiles (
+            id, email, name, avatar, role, phone, wechat, created_at
+          ) VALUES (
+            {{id}}, {{email}}, {{name}}, {{avatar}}, {{role}}, {{phone}}, {{wechat}}, ${NOW_UTC8_EXPR}
+          )
+        `,
+        {
+          id: normalizedUserId,
+          email: nextProfileEmail,
+          name: normalizedName,
+          avatar: isWechatMiniUser ? null : hasAvatarPatch ? nextAvatar : null,
+          role: nextProfileRole === 'admin' ? 'admin' : 'user',
+          phone: nextPhone,
+          wechat: nextWechat,
+        }
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+
+    if (/duplicate entry|1062|er_dup_entry/i.test(message)) {
+      return {
+        user: null,
+        error: 'phone_already_in_use',
+      };
+    }
+
+    throw error;
+  }
+
+  const updatedUser = await findUserById(normalizedUserId);
+  const fallbackUser = {
+    ...userRecord,
+    phone: nextPhone ?? normalizeOptionalAuthText(userRecord.phone),
+    name: normalizedName,
+    avatar: isWechatMiniUser
+      ? null
+      : hasAvatarPatch
+        ? nextAvatar
+        : normalizeOptionalAuthText(userRecord.avatar),
+  };
+
+  return {
+    user: toAuthUser(updatedUser || fallbackUser),
+    error: null,
+  };
+}
+
+export async function registerUserWithPhone(phone: string, password: string): Promise<{ user: AuthUser | null; error: string | null }> {
+  const normalizedPhone = normalizePhone(phone);
+
+  const existingUser = await findUserByPhone(normalizedPhone);
+  if (existingUser) {
+    return {
+      user: null,
+      error: 'already_registered',
+    };
+  }
+
+  const userId = randomUUID();
+  const passwordHash = hashPassword(password);
+
+  try {
+    await executeSQL(
+      `
+        INSERT INTO users (
+          id, email, phone, password_hash, role, created_at, updated_at, deleted_at
+        ) VALUES (
+          {{id}}, NULL, {{phone}}, {{password_hash}}, 'user', ${NOW_UTC8_EXPR}, ${NOW_UTC8_EXPR}, NULL
+        )
+      `,
+      {
+        id: userId,
+        phone: normalizedPhone,
+        password_hash: passwordHash,
+      }
+    );
+
+    await executeSQL(
+      `
+        INSERT INTO profiles (
+          id, email, name, role, phone, created_at
+        ) VALUES (
+          {{id}}, NULL, '拾光者', 'user', {{phone}}, ${NOW_UTC8_EXPR}
+        )
+      `,
+      {
+        id: userId,
+        phone: normalizedPhone,
+      }
+    );
+
+    await executeSQL(
+      `
+        INSERT INTO analytics_daily (date, new_users_count, active_users_count)
+        VALUES (${TODAY_UTC8_EXPR}, 1, 0)
+        ON DUPLICATE KEY UPDATE new_users_count = new_users_count + 1
+      `
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    if (/duplicate entry|1062|er_dup_entry/i.test(message)) {
+      return {
+        user: null,
+        error: 'already_registered',
+      };
+    }
+
+    // 非幂等失败时尽量回滚已写入数据，避免 users/profiles 半成功。
+    try {
+      await executeSQL(
+        `
+          DELETE FROM users
+          WHERE id = {{user_id}}
+        `,
+        { user_id: userId }
+      );
+    } catch {
+      // ignore cleanup failure, keep original error semantics
+    }
+
+    throw error;
+  }
+
+  return {
+    user: {
+      id: userId,
+      email: null,
+      phone: normalizedPhone,
+      role: 'user',
+      name: '拾光者',
+      avatar: null,
+    },
+    error: null,
+  };
+}
+
+export async function signInWithPassword(
+  phone: string,
+  password: string,
+  userAgent?: string,
+  ipAddress?: string
+): Promise<{ user: AuthUser | null; sessionToken: string | null; error: string | null }> {
+  const userRecord = await findUserByPhone(phone);
+
+  if (!userRecord) {
+    return {
+      user: null,
+      sessionToken: null,
+      error: 'invalid_login_credentials',
+    };
+  }
+
+  const passwordHash = String(userRecord.password_hash ?? '');
+  const isPasswordValid = verifyPassword(password, passwordHash);
+
+  if (!passwordHash || !isPasswordValid) {
+    return {
+      user: null,
+      sessionToken: null,
+      error: 'invalid_login_credentials',
+    };
+  }
+
+  if (Number(userRecord.is_disabled ?? 0) > 0) {
+    return {
+      user: null,
+      sessionToken: null,
+      error: 'account_disabled',
+    };
+  }
+
+  const user = toAuthUser(userRecord);
+  const sessionToken = await createSession(user.id, userAgent, ipAddress);
+
+  return {
+    user,
+    sessionToken,
+    error: null,
+  };
+}
+
+function toWechatMiniEmail(openid: string): string {
+  // 使用稳定的伪邮箱将小程序 openid 映射到现有 users 体系，避免额外建表。
+  return normalizeEmail(`wx_mp_${openid}@${WECHAT_MINI_EMAIL_DOMAIN}`);
+}
+
+async function exchangeWechatMiniCode(code: string): Promise<{ openid: string; unionid: string | null }> {
+  const appId = String(process.env.WX_MINI_APPID || '').trim();
+  const appSecret = String(process.env.WX_MINI_SECRET || '').trim();
+
+  if (!appId || !appSecret) {
+    throw new Error('wx_mini_config_missing');
+  }
+
+  const requestUrl = new URL('https://api.weixin.qq.com/sns/jscode2session');
+  requestUrl.searchParams.set('appid', appId);
+  requestUrl.searchParams.set('secret', appSecret);
+  requestUrl.searchParams.set('js_code', code);
+  requestUrl.searchParams.set('grant_type', 'authorization_code');
+
+  const response = await fetch(requestUrl.toString(), {
+    method: 'GET',
+    cache: 'no-store',
+  });
+  const payload = (await response.json()) as WechatMiniProgramSessionPayload;
+
+  if (!response.ok || payload.errcode || !payload.openid) {
+    const errorCode = Number(payload.errcode || response.status || 0);
+    const errorMessage = String(payload.errmsg || response.statusText || 'unknown').trim();
+    throw new Error(`wx_mini_code_exchange_failed:${errorCode}:${errorMessage}`);
+  }
+
+  return {
+    openid: String(payload.openid),
+    unionid: payload.unionid ? String(payload.unionid) : null,
+  };
+}
+
+async function ensureWechatMiniProfile(
+  userId: string,
+  profileEmail: string | null,
+  profileRole: 'admin' | 'user',
+  nickName?: string
+): Promise<void> {
+  const normalizedName = normalizeWechatMiniNickName(nickName);
+  try {
+    await executeSQL(
+      `
+        INSERT INTO profiles (
+          id, email, name, avatar, role, phone, created_at
+        ) VALUES (
+          {{id}}, {{email}}, {{name}}, NULL, {{role}}, NULL, ${NOW_UTC8_EXPR}
+        )
+      `,
+      {
+        id: userId,
+        email: profileEmail,
+        name: normalizedName,
+        role: profileRole,
+      }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    if (!/duplicate entry|1062|er_dup_entry/i.test(message)) {
+      throw error;
+    }
+  }
+}
+
+async function ensureWechatMiniUser(openid: string, nickName?: string): Promise<AuthUser> {
+  const normalizedOpenid = String(openid || '').trim();
+  if (!normalizedOpenid) {
+    throw new Error('wx_mini_openid_missing');
+  }
+
+  const loginEmail = toWechatMiniEmail(normalizedOpenid);
+  const normalizedName = normalizeWechatMiniNickName(nickName);
+
+  const existingUser = await findUserByEmail(loginEmail);
+  if (existingUser) {
+    if (Number(existingUser.is_disabled ?? 0) > 0) {
+      throw new Error('account_disabled');
+    }
+    await ensureWechatMiniProfile(
+      String(existingUser.id),
+      existingUser.email ? String(existingUser.email) : null,
+      existingUser.role === 'admin' ? 'admin' : 'user',
+      normalizedName
+    );
+    return (
+      (await readLatestAuthUserById(String(existingUser.id), normalizedName)) ||
+      toAuthUser({
+        ...existingUser,
+        name: normalizeOptionalAuthText(existingUser.name) || normalizedName,
+      })
+    );
+  }
+
+  const userId = randomUUID();
+  const passwordHash = hashPassword(randomUUID().replace(/-/g, ''));
+
+  try {
+    await executeSQL(
+      `
+        INSERT INTO users (
+          id, email, phone, password_hash, role, created_at, updated_at, deleted_at
+        ) VALUES (
+          {{id}}, {{email}}, NULL, {{password_hash}}, 'user', ${NOW_UTC8_EXPR}, ${NOW_UTC8_EXPR}, NULL
+        )
+      `,
+      {
+        id: userId,
+        email: loginEmail,
+        password_hash: passwordHash,
+      }
+    );
+
+    await executeSQL(
+      `
+        INSERT INTO profiles (
+          id, email, name, avatar, role, phone, created_at
+        ) VALUES (
+          {{id}}, {{email}}, {{name}}, NULL, 'user', NULL, ${NOW_UTC8_EXPR}
+        )
+      `,
+      {
+        id: userId,
+        email: loginEmail,
+        name: normalizedName,
+      }
+    );
+
+    await executeSQL(
+      `
+        INSERT INTO analytics_daily (date, new_users_count, active_users_count)
+        VALUES (${TODAY_UTC8_EXPR}, 1, 0)
+        ON DUPLICATE KEY UPDATE new_users_count = new_users_count + 1
+      `
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    if (/duplicate entry|1062|er_dup_entry/i.test(message)) {
+      const fallbackUser = await findUserByEmail(loginEmail);
+      if (fallbackUser) {
+        if (Number(fallbackUser.is_disabled ?? 0) > 0) {
+          throw new Error('account_disabled');
+        }
+        await ensureWechatMiniProfile(
+          String(fallbackUser.id),
+          fallbackUser.email ? String(fallbackUser.email) : null,
+          fallbackUser.role === 'admin' ? 'admin' : 'user',
+          normalizedName
+        );
+        return (
+          (await readLatestAuthUserById(String(fallbackUser.id), normalizedName)) ||
+          toAuthUser({
+            ...fallbackUser,
+            name: normalizeOptionalAuthText(fallbackUser.name) || normalizedName,
+          })
+        );
+      }
+    }
+
+    throw error;
+  }
+
+  return {
+    id: userId,
+    email: loginEmail,
+    phone: null,
+    role: 'user',
+    name: normalizedName,
+    avatar: null,
+  };
+}
+
+export async function signInWithWechatMiniProgram(
+  code: string,
+  options: {
+    nickName?: string;
+    userAgent?: string;
+    ipAddress?: string;
+  } = {}
+): Promise<{ user: AuthUser | null; sessionToken: string | null; openid: string | null; error: string | null }> {
+  const normalizedCode = String(code || '').trim();
+  if (!normalizedCode) {
+    return {
+      user: null,
+      sessionToken: null,
+      openid: null,
+      error: 'invalid_code',
+    };
+  }
+
+  try {
+    const { openid } = await exchangeWechatMiniCode(normalizedCode);
+    const user = await ensureWechatMiniUser(openid, options.nickName);
+    const sessionToken = await createSession(user.id, options.userAgent, options.ipAddress);
+
+    return {
+      user,
+      sessionToken,
+      openid,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      user: null,
+      sessionToken: null,
+      openid: null,
+      error: error instanceof Error ? error.message : 'wx_mini_login_failed',
+    };
+  }
+}
+
+export async function signInWithWechatMiniProgramOpenid(
+  openid: string,
+  options: {
+    nickName?: string;
+    userAgent?: string;
+    ipAddress?: string;
+  } = {}
+): Promise<{ user: AuthUser | null; sessionToken: string | null; openid: string | null; error: string | null }> {
+  const normalizedOpenid = String(openid || '').trim();
+  if (!normalizedOpenid) {
+    return {
+      user: null,
+      sessionToken: null,
+      openid: null,
+      error: 'invalid_openid',
+    };
+  }
+
+  try {
+    const user = await ensureWechatMiniUser(normalizedOpenid, options.nickName);
+    const sessionToken = await createSession(user.id, options.userAgent, options.ipAddress);
+
+    return {
+      user,
+      sessionToken,
+      openid: normalizedOpenid,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      user: null,
+      sessionToken: null,
+      openid: normalizedOpenid,
+      error: error instanceof Error ? error.message : 'wx_mini_login_failed',
+    };
+  }
+}
+
+export async function signInExistingWechatMiniProgramOpenid(
+  openid: string,
+  options: {
+    userAgent?: string;
+    ipAddress?: string;
+  } = {}
+): Promise<{ user: AuthUser | null; sessionToken: string | null; openid: string | null; error: string | null }> {
+  const normalizedOpenid = String(openid || '').trim();
+  if (!normalizedOpenid) {
+    return {
+      user: null,
+      sessionToken: null,
+      openid: null,
+      error: 'invalid_openid',
+    };
+  }
+
+  try {
+    const userRecord = await findUserByEmail(toWechatMiniEmail(normalizedOpenid));
+    if (!userRecord) {
+      return {
+        user: null,
+        sessionToken: null,
+        openid: normalizedOpenid,
+        error: 'wx_mini_user_not_found',
+      };
+    }
+
+    if (Number(userRecord.is_disabled ?? 0) > 0) {
+      return {
+        user: null,
+        sessionToken: null,
+        openid: normalizedOpenid,
+        error: 'account_disabled',
+      };
+    }
+
+    const user = toAuthUser(userRecord);
+    const sessionToken = await createSession(user.id, options.userAgent, options.ipAddress);
+
+    return {
+      user,
+      sessionToken,
+      openid: normalizedOpenid,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      user: null,
+      sessionToken: null,
+      openid: normalizedOpenid,
+      error: error instanceof Error ? error.message : 'wx_mini_login_failed',
+    };
+  }
+}
+
+export async function updateUserPassword(userId: string, newPassword: string): Promise<{ error: string | null }> {
+  const result = await executeSQL(
+    `
+      SELECT password_hash
+      FROM users
+      WHERE id = {{user_id}} AND deleted_at <=> NULL
+      LIMIT 1
+    `,
+    { user_id: userId }
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return { error: 'user_not_found' };
+  }
+
+  const currentHash = String(row.password_hash ?? '');
+  if (currentHash && verifyPassword(newPassword, currentHash)) {
+    return { error: 'new password should be different from the old password' };
+  }
+
+  const newHash = hashPassword(newPassword);
+  await executeSQL(
+    `
+      UPDATE users
+      SET password_hash = {{password_hash}}
+      WHERE id = {{user_id}} AND deleted_at <=> NULL
+    `,
+    {
+      password_hash: newHash,
+      user_id: userId,
+    }
+  );
+
+  // 修改密码后强制所有设备下线（包含当前会话）
+  await revokeSessionsByUserId(userId);
+
+  return { error: null };
+}
+
+export async function verifyUserPassword(
+  userId: string,
+  password: string
+): Promise<{ valid: boolean; error: string | null }> {
+  const result = await executeSQL(
+    `
+      SELECT password_hash
+      FROM users
+      WHERE id = {{user_id}} AND deleted_at <=> NULL
+      LIMIT 1
+    `,
+    { user_id: userId }
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return { valid: false, error: 'user_not_found' };
+  }
+
+  const currentHash = String(row.password_hash ?? '');
+  if (!currentHash || !verifyPassword(password, currentHash)) {
+    return { valid: false, error: 'invalid_current_password' };
+  }
+
+  return { valid: true, error: null };
+}
+
+export async function createPasswordResetToken(email: string): Promise<{ token: string | null; error: string | null }> {
+  const userRecord = await findUserByEmail(email);
+  if (!userRecord) {
+    return { token: null, error: 'user not found' };
+  }
+
+  const token = randomUUID().replace(/-/g, '');
+  const tokenId = randomUUID();
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+  await executeSQL(
+    `
+      INSERT INTO password_reset_tokens (
+        id, user_id, token_hash, expires_at, created_at
+      ) VALUES (
+        {{id}}, {{user_id}}, {{token_hash}}, {{expires_at}}, UTC_TIMESTAMP()
+      )
+    `,
+    {
+      id: tokenId,
+      user_id: String(userRecord.id),
+      token_hash: token,
+      expires_at: expiresAt,
+    }
+  );
+
+  return { token, error: null };
+}
+
+export async function consumePasswordResetToken(tokenHash: string): Promise<{ user: AuthUser | null; sessionToken: string | null; error: string | null }> {
+  const tokenResult = await executeSQL(
+    `
+      SELECT
+        prt.id,
+        prt.user_id,
+        u.email,
+        u.phone,
+        CASE
+          WHEN p.role = 'admin' AND u.role = 'admin' THEN 'admin'
+          ELSE 'user'
+        END AS role,
+        p.name,
+        p.avatar
+      FROM password_reset_tokens prt
+      JOIN users u ON u.id = prt.user_id
+      LEFT JOIN profiles p ON p.id = u.id
+      WHERE prt.token_hash = {{token_hash}}
+        AND prt.used_at <=> NULL
+        AND prt.expires_at > UTC_TIMESTAMP()
+        AND u.deleted_at <=> NULL
+      LIMIT 1
+    `,
+    {
+      token_hash: tokenHash,
+    }
+  );
+
+  const row = tokenResult.rows[0];
+  if (!row) {
+    return {
+      user: null,
+      sessionToken: null,
+      error: 'invalid_or_expired_token',
+    };
+  }
+
+  await executeSQL(
+    `
+      UPDATE password_reset_tokens
+      SET used_at = UTC_TIMESTAMP()
+      WHERE id = {{id}}
+    `,
+    {
+      id: String(row.id),
+    }
+  );
+
+  const user = toAuthUser(row);
+  const sessionToken = await createSession(user.id);
+
+  return {
+    user,
+    sessionToken,
+    error: null,
+  };
+}
