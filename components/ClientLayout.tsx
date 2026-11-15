@@ -342,6 +342,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           }
         } catch {
           if (!cancelled) {
+            // 配置失效时收起旧入口，避免继续展示已被管理员隐藏的菜单。
+            setShellRuntime(undefined);
             setShellRuntimeError(true);
           }
         }
@@ -353,12 +355,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     };
 
     void fetchRuntime(true);
+    const refreshVisibleRuntime = () => {
+      if (document.visibilityState === 'visible') void fetchRuntime();
+    };
+    window.addEventListener('focus', refreshVisibleRuntime);
+    document.addEventListener('visibilitychange', refreshVisibleRuntime);
 
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', refreshVisibleRuntime);
+      document.removeEventListener('visibilitychange', refreshVisibleRuntime);
       runtimeFetchPendingRef.current = null;
     };
-  }, [isAdminRoute, runtimeReloadKey]);
+  }, [isAdminRoute, pathname, runtimeReloadKey]);
 
   useEffect(() => {
     if (isAdminRoute) {

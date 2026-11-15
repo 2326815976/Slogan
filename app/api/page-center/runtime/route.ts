@@ -33,10 +33,6 @@ export async function GET() {
     };
     return NextResponse.json(data);
   } catch (error) {
-    if (webShellRuntimeCache) {
-      return NextResponse.json(webShellRuntimeCache.data);
-    }
-
     if (isRetryableSqlError(error)) {
       logSqlError('读取 Web 页面壳运行时失败:', error);
       return NextResponse.json(

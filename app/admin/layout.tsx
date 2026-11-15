@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/cloudbase/server';
 import AdminSidebar from './components/AdminSidebar';
+import AdminAccessDenied from './components/AdminAccessDenied';
 
 const CONNECTION_PANEL_TITLE = '管理台暂时不可用';
 const RETRY_TEXT = '立即重试';
@@ -160,7 +161,7 @@ export default async function AdminLayout({
   }
 
   if (profile?.role !== 'admin') {
-    redirect('/profile');
+    return <AdminAccessDenied />;
   }
 
   return (

@@ -386,6 +386,7 @@ export default function AlbumDetailPage() {
   const [, setPinningPhotoIds] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [photoLoadError, setPhotoLoadError] = useState('');
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressState>(INITIAL_DOWNLOAD_PROGRESS_STATE);
   const [fullscreenPhoto, setFullscreenPhoto] = useState<string | null>(null); // 全屏查看的照片ID
   const [photoAspectRatioMap, setPhotoAspectRatioMap] = useState<Record<string, number>>({});
@@ -910,16 +911,24 @@ export default function AlbumDetailPage() {
       };
     }
 
-    const { data, error } = await dbClient.rpc('get_album_photo_page', {
+    const requestPage = () => dbClient.rpc('get_album_photo_page', {
       input_key: normalizedAccessKey,
       folder_id: resolveFolderRpcArg(folderId),
       page_no: targetPageNo,
       page_size: ALBUM_PAGE_SIZE,
     });
+    let result = await requestPage();
+    const isInvalidPage = (data: unknown) => {
+      if (!data || typeof data !== 'object' || !('photos' in data) || !Array.isArray(data.photos)) return true;
+      return targetPageNo === 1 && data.photos.length === 0 && 'total' in data && Number(data.total) > 0;
+    };
+    // 异常首屏只重试一次，避免把后端不完整响应当作空文件夹。
+    if (!result.error && isInvalidPage(result.data)) result = await requestPage();
+    const { data, error } = result;
 
-    if (error) {
+    if (error || isInvalidPage(data)) {
       return {
-        errorMessage: String(error.message || '加载失败').trim() || '加载失败',
+        errorMessage: String(error?.message || '照片暂时未能加载，请重试').trim(),
         folderId,
         pageNo: targetPageNo,
         rows: [],
@@ -928,8 +937,8 @@ export default function AlbumDetailPage() {
       };
     }
 
-    const payload = (data && typeof data === 'object') ? (data as any) : {};
-    const rawPageRows = Array.isArray(payload.photos) ? (payload.photos as Photo[]) : [];
+    const payload = data as { photos: Photo[]; total?: number; has_more?: boolean };
+    const rawPageRows = payload.photos;
     const hydratedPageRows = rawPageRows.length > 0
       ? await hydratePhotoDimensions(rawPageRows)
       : rawPageRows;
@@ -1089,6 +1098,7 @@ export default function AlbumDetailPage() {
 
     if (reset) {
       invalidateAlbumPrefetch();
+      setPhotoLoadError('');
       if (!silent) {
         setLoading(true);
       }
@@ -1135,6 +1145,7 @@ export default function AlbumDetailPage() {
         silent,
       });
       nextPendingFolderPhotoIds = committed?.nextPendingFolderPhotoIds ?? null;
+      setPhotoLoadError('');
       return Boolean(committed);
     } catch (error) {
       if (requestToken !== photoLoadTokenRef.current) {
@@ -1143,6 +1154,7 @@ export default function AlbumDetailPage() {
       if (selectedFolderRef.current !== normalizedFolderId) {
         return false;
       }
+      setPhotoLoadError('照片暂时未能加载，请重试');
       if (reset && nextPendingFolderPhotoIds !== null) {
         nextPendingFolderPhotoIds = [];
         setPendingFolderPhotoIds([]);
@@ -2502,6 +2514,20 @@ export default function AlbumDetailPage() {
         )}
 
         <div ref={paginationSentinelRef} className="h-px w-full" aria-hidden="true" />
+
+        {photoLoadError && filteredPhotos.length === 0 && (
+          <div className="py-8 text-center text-sm text-[#5D4037]" role="alert">
+            <p>{photoLoadError}</p>
+            <button
+              type="button"
+              className="mt-3 rounded-full bg-[#FFC857] px-4 py-2"
+              disabled={loading || loadingMore || isFolderSwitchOverlayLoading}
+              onClick={() => void loadAlbumPhotoPage(selectedFolderRef.current, 1, { reset: true })}
+            >
+              重新加载
+            </button>
+          </div>
+        )}
 
         {loadingMore && (
           <div className="flex justify-center items-center gap-2 mt-6 mb-2">

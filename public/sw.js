@@ -192,8 +192,13 @@ sw.addEventListener('fetch', /** @param {FetchEvent} event */ (event) => {
     return;
   }
 
-  // 认证接口严禁缓存，避免登录态读写被旧响应干扰
-  if (url.pathname.startsWith('/api/auth/')) {
+  // 登录、菜单权限和后台数据必须读取当前状态，断网时不能恢复过期权限或他人数据。
+  if (
+    url.pathname.startsWith('/api/auth/') ||
+    url.pathname.startsWith('/api/page-center/') ||
+    url.pathname.startsWith('/api/admin/') ||
+    url.pathname === '/api/miniprogram/runtime-config'
+  ) {
     event.respondWith(fetch(request));
     return;
   }

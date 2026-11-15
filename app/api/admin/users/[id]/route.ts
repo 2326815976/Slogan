@@ -51,6 +51,9 @@ export async function PATCH(
     }
 
     if (hasNoteInput) {
+      if (body?.adminNote !== null && typeof body?.adminNote !== 'string') {
+        return createGuardErrorResponse('备注必须是文本或空值', 400);
+      }
       if (String(body?.adminNote ?? '').length > ADMIN_USER_NOTE_MAX_LENGTH) {
         return createGuardErrorResponse(`备注最多 ${ADMIN_USER_NOTE_MAX_LENGTH} 个字符`, 400);
       }
