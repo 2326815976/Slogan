@@ -13,6 +13,7 @@ interface AdminUserItem {
   email: string | null;
   phone: string | null;
   wechat: string | null;
+  adminNote: string | null;
   role: 'user' | 'admin';
   isDisabled: boolean;
   disabledAt: string | null;
@@ -126,6 +127,7 @@ function normalizeAdminUserRow(row: unknown): AdminUserItem | null {
     email: toSafeText(row.email),
     phone: toSafeText(row.phone),
     wechat: toSafeText(row.wechat),
+    adminNote: toSafeText(row.adminNote ?? row.admin_note),
     role: row.role === 'admin' ? 'admin' : 'user',
     isDisabled: toSafeBoolean(row.isDisabled ?? row.is_disabled),
     disabledAt: toSafeText(row.disabledAt ?? row.disabled_at),
@@ -177,6 +179,10 @@ export default function AdminUsersPage() {
   const [passwordForm, setPasswordForm] = useState<PasswordFormState>(EMPTY_PASSWORD_FORM);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+  const [noteTarget, setNoteTarget] = useState<AdminUserItem | null>(null);
+  const [noteText, setNoteText] = useState('');
+  const [noteError, setNoteError] = useState('');
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
 
   const totalUsers = users.length;
   const activeUsers = useMemo(() => users.filter((item) => !item.isDisabled).length, [users]);
@@ -356,6 +362,62 @@ export default function AdminUsersPage() {
     [passwordForm, passwordTarget]
   );
 
+  const handleOpenNoteModal = useCallback((user: AdminUserItem) => {
+    setNoteTarget(user);
+    setNoteText(user.adminNote || '');
+    setNoteError('');
+  }, []);
+
+  const handleSubmitNote = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!noteTarget) {
+        return;
+      }
+
+      const nextNote = noteText.replace(/\r\n/g, '\n').trim();
+      if (nextNote.length > 500) {
+        setNoteError('备注最多 500 个字符');
+        return;
+      }
+
+      setNoteSubmitting(true);
+      setNoteError('');
+      try {
+        const response = await fetch(`/api/admin/users/${encodeURIComponent(noteTarget.id)}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ adminNote: nextNote }),
+        });
+        const payload = await readResponsePayload(response);
+        if (!response.ok) {
+          throw new Error(readPayloadErrorMessage(payload, '保存用户备注失败'));
+        }
+
+        const savedNote = toSafeText(readPayloadField(payload, 'adminNote')) || nextNote || null;
+        setUsers((current) =>
+          current.map((item) =>
+            item.id === noteTarget.id ? { ...item, adminNote: savedNote } : item
+          )
+        );
+        setNoteTarget(null);
+        setNoteText('');
+        setNotice({
+          type: 'success',
+          message: nextNote ? '用户备注已保存' : '用户备注已清空',
+        });
+      } catch (submitError) {
+        setNoteError(submitError instanceof Error ? submitError.message : '保存用户备注失败');
+      } finally {
+        setNoteSubmitting(false);
+      }
+    },
+    [noteTarget, noteText]
+  );
+
   return (
     <div className="admin-mobile-page user-admin-page space-y-6 pt-6">
       <section className="stats-header">
@@ -372,7 +434,7 @@ export default function AdminUsersPage() {
               type="button"
               className="stats-refresh-btn"
               onClick={() => void loadUsers('refresh')}
-              disabled={loading || refreshing || Boolean(actingUserId) || passwordSubmitting}
+              disabled={loading || refreshing || Boolean(actingUserId) || passwordSubmitting || noteSubmitting}
             >
               {refreshing ? '刷新中...' : '刷新列表'}
             </button>
@@ -380,7 +442,7 @@ export default function AdminUsersPage() {
               type="button"
               className="stats-refresh-btn"
               onClick={() => router.push('/admin/stats')}
-              disabled={loading || refreshing || Boolean(actingUserId) || passwordSubmitting}
+              disabled={loading || refreshing || Boolean(actingUserId) || passwordSubmitting || noteSubmitting}
             >
               返回统计
             </button>
@@ -477,16 +539,30 @@ export default function AdminUsersPage() {
                     <span className="user-admin-contact__label">微信号</span>
                     <span className="user-admin-contact__value">{user.wechat || '未填写'}</span>
                   </div>
+                  <div className="user-admin-contact__row">
+                    <span className="user-admin-contact__label">管理员备注</span>
+                    <span className="user-admin-contact__value user-admin-contact__value--note">
+                      {user.adminNote || '暂无备注'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="user-admin-actions">
+                  <button
+                    type="button"
+                    className="user-admin-action user-admin-action--ghost"
+                    onClick={() => handleOpenNoteModal(user)}
+                    disabled={isActing || passwordSubmitting || noteSubmitting}
+                  >
+                    编辑备注
+                  </button>
                   {canManage ? (
                     <>
                       <button
                         type="button"
                         className={`user-admin-action ${user.isDisabled ? 'user-admin-action--primary' : 'user-admin-action--ghost'}`}
                         onClick={() => void handleToggleDisabled(user)}
-                        disabled={isActing || passwordSubmitting}
+                        disabled={isActing || passwordSubmitting || noteSubmitting}
                       >
                         {isActing ? '处理中...' : user.isDisabled ? '恢复账号' : '禁用账号'}
                       </button>
@@ -494,7 +570,7 @@ export default function AdminUsersPage() {
                         type="button"
                         className="user-admin-action user-admin-action--primary"
                         onClick={() => handleOpenPasswordModal(user)}
-                        disabled={isActing || passwordSubmitting}
+                        disabled={isActing || passwordSubmitting || noteSubmitting}
                       >
                         修改密码
                       </button>
@@ -502,7 +578,7 @@ export default function AdminUsersPage() {
                         type="button"
                         className="user-admin-action user-admin-action--danger"
                         onClick={() => setDeleteTarget(user)}
-                        disabled={isActing || passwordSubmitting}
+                        disabled={isActing || passwordSubmitting || noteSubmitting}
                       >
                         删除账号
                       </button>
@@ -603,6 +679,58 @@ export default function AdminUsersPage() {
                 </button>
                 <button type="submit" className="stats-maint-btn" disabled={passwordSubmitting}>
                   {passwordSubmitting ? '提交中...' : '确认修改'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {noteTarget ? (
+        <div className="booking-modal-mask" onClick={() => (noteSubmitting ? undefined : setNoteTarget(null))}>
+          <div
+            className="booking-modal booking-modal--form user-admin-password-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="booking-modal__head">
+              <h3 className="booking-modal__title">编辑用户备注</h3>
+            </div>
+            <form className="booking-modal__body" onSubmit={handleSubmitNote}>
+              <div className="booking-modal__field">
+                <label className="booking-modal__label">目标账号</label>
+                <input className="booking-modal__input" value={buildDisplayName(noteTarget)} disabled />
+              </div>
+              <div className="booking-modal__field">
+                <label className="booking-modal__label" htmlFor="admin-user-note-input">
+                  管理员备注
+                </label>
+                <textarea
+                  id="admin-user-note-input"
+                  className="booking-modal__textarea"
+                  value={noteText}
+                  onChange={(event) => setNoteText(event.target.value)}
+                  placeholder="记录沟通偏好、返图状态或其他管理员内部信息"
+                  maxLength={500}
+                  rows={4}
+                  autoFocus
+                />
+                <div className="user-admin-note-meta">
+                  <span>仅管理员可见</span>
+                  <span>{noteText.length}/500</span>
+                </div>
+              </div>
+              {noteError ? <span className="user-admin-inline-error">{noteError}</span> : null}
+              <div className="user-admin-password-actions">
+                <button
+                  type="button"
+                  className="stats-refresh-btn"
+                  onClick={() => setNoteTarget(null)}
+                  disabled={noteSubmitting}
+                >
+                  取消
+                </button>
+                <button type="submit" className="stats-maint-btn" disabled={noteSubmitting}>
+                  {noteSubmitting ? '保存中...' : '保存备注'}
                 </button>
               </div>
             </form>

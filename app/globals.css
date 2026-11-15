@@ -5829,6 +5829,21 @@ a.icon-button > svg {
   word-break: break-all;
 }
 
+.user-admin-contact__value--note {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user-admin-note-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(93, 64, 55, 0.52);
+}
+
 .user-admin-actions {
   display: flex;
   flex-wrap: wrap;

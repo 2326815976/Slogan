@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { ensureAdminSession } from '@/app/api/admin/_utils/ensure-admin-session';
-import { deleteAdminManagedUser, findAdminManagedUser, setAdminUserDisabled } from '../_server';
+import {
+  ADMIN_USER_NOTE_MAX_LENGTH,
+  deleteAdminManagedUser,
+  findAdminManagedUser,
+  normalizeAdminUserNote,
+  setAdminUserDisabled,
+  setAdminUserNote,
+} from '../_server';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,14 +35,32 @@ export async function PATCH(
       return createGuardErrorResponse('用户 ID 非法', 400);
     }
 
-    const body = (await request.json().catch(() => null)) as { isDisabled?: unknown } | null;
-    if (typeof body?.isDisabled !== 'boolean') {
-      return createGuardErrorResponse('缺少禁用状态参数', 400);
+    const body = (await request.json().catch(() => null)) as {
+      isDisabled?: unknown;
+      adminNote?: unknown;
+    } | null;
+    const hasDisabledInput = Object.prototype.hasOwnProperty.call(body ?? {}, 'isDisabled');
+    const hasNoteInput = Object.prototype.hasOwnProperty.call(body ?? {}, 'adminNote');
+    if (hasDisabledInput === hasNoteInput) {
+      return createGuardErrorResponse('请提供且仅提供一种用户更新内容', 400);
     }
 
     const targetUser = await findAdminManagedUser(userId);
     if (!targetUser) {
       return createGuardErrorResponse('目标用户不存在', 404);
+    }
+
+    if (hasNoteInput) {
+      if (String(body?.adminNote ?? '').length > ADMIN_USER_NOTE_MAX_LENGTH) {
+        return createGuardErrorResponse(`备注最多 ${ADMIN_USER_NOTE_MAX_LENGTH} 个字符`, 400);
+      }
+      const normalizedNote = normalizeAdminUserNote(body?.adminNote);
+      const data = await setAdminUserNote(userId, normalizedNote);
+      return NextResponse.json({ success: true, data });
+    }
+
+    if (typeof body?.isDisabled !== 'boolean') {
+      return createGuardErrorResponse('缺少禁用状态参数', 400);
     }
     if (targetUser.id === adminCheck.userId) {
       return createGuardErrorResponse('不支持禁用当前登录管理员');

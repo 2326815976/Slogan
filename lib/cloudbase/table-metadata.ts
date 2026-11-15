@@ -10,7 +10,7 @@ export interface TableMetadata {
 const metadataList: TableMetadata[] = [
   {
     name: 'users',
-    columns: ['id', 'email', 'phone', 'password_hash', 'role', 'created_at', 'updated_at', 'deleted_at'],
+    columns: ['id', 'email', 'phone', 'password_hash', 'role', 'admin_note', 'created_at', 'updated_at', 'deleted_at'],
     primaryKey: 'id',
     primaryKeyKind: 'uuid',
   },

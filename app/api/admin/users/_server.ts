@@ -6,6 +6,9 @@ import { deleteCloudBaseObjects } from '@/lib/cloudbase/storage';
 
 export const ADMIN_USERS_MIGRATION_REQUIRED_MESSAGE =
   '用户禁用能力尚未完成数据库升级，请先执行 photo/sql/migrations/30_admin_user_disable_flag.sql';
+export const ADMIN_USER_NOTE_MAX_LENGTH = 500;
+export const ADMIN_USER_NOTE_MIGRATION_REQUIRED_MESSAGE =
+  '用户备注能力尚未完成数据库升级，请先执行 photo/sql/migrations/37_admin_user_note.sql';
 const NOW_UTC8_EXPR = 'DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR)';
 const DISABLED_AT_UTC8_EXPR = 'DATE_ADD(u.disabled_at, INTERVAL 8 HOUR)';
 
@@ -15,6 +18,7 @@ export interface AdminUserListItem {
   email: string | null;
   phone: string | null;
   wechat: string | null;
+  adminNote: string | null;
   role: 'user' | 'admin';
   isDisabled: boolean;
   disabledAt: string | null;
@@ -62,7 +66,10 @@ function isMissingColumnError(error: unknown, columnName: string): boolean {
   );
 }
 
-function buildAdminUserListQuery(includeDisabledField: boolean): string {
+function buildAdminUserListQuery(
+  includeDisabledField: boolean,
+  includeAdminNoteField: boolean
+): string {
   return `
     SELECT
       u.id,
@@ -70,6 +77,7 @@ function buildAdminUserListQuery(includeDisabledField: boolean): string {
       COALESCE(NULLIF(TRIM(p.email), ''), NULLIF(TRIM(u.email), '')) AS email,
       COALESCE(NULLIF(TRIM(p.phone), ''), NULLIF(TRIM(u.phone), '')) AS phone,
       p.wechat,
+      ${includeAdminNoteField ? 'u.admin_note' : 'NULL AS admin_note'},
       CASE
         WHEN p.role = 'admin' AND u.role = 'admin' THEN 'admin'
         ELSE 'user'
@@ -134,6 +142,7 @@ function mapAdminUserRow(row: Record<string, unknown>): AdminUserListItem {
     email: toTextOrNull(row.email),
     phone: toTextOrNull(row.phone),
     wechat: toTextOrNull(row.wechat),
+    adminNote: toTextOrNull(row.admin_note),
     role: row.role === 'admin' ? 'admin' : 'user',
     isDisabled: toDbBoolean(row.is_disabled),
     disabledAt: toTextOrNull(row.disabled_at),
@@ -202,14 +211,35 @@ async function collectUserStorageTargets(userId: string): Promise<string[]> {
 }
 
 export async function listAdminUsers(): Promise<AdminUserListItem[]> {
-  let result;
-  try {
-    result = await executeSQL(buildAdminUserListQuery(true));
-  } catch (error) {
-    if (!isMissingColumnError(error, 'is_disabled')) {
+  let includeDisabledField = true;
+  let includeAdminNoteField = true;
+  let result: Awaited<ReturnType<typeof executeSQL>> | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      result = await executeSQL(
+        buildAdminUserListQuery(includeDisabledField, includeAdminNoteField)
+      );
+      break;
+    } catch (error) {
+      if (includeAdminNoteField && isMissingColumnError(error, 'admin_note')) {
+        includeAdminNoteField = false;
+        continue;
+      }
+      if (
+        includeDisabledField &&
+        (isMissingColumnError(error, 'is_disabled') ||
+          isMissingColumnError(error, 'disabled_at'))
+      ) {
+        includeDisabledField = false;
+        continue;
+      }
       throw error;
     }
-    result = await executeSQL(buildAdminUserListQuery(false));
+  }
+
+  if (!result) {
+    throw new Error('读取用户列表失败');
   }
 
   return (Array.isArray(result.rows) ? result.rows : [])
@@ -280,6 +310,56 @@ export async function setAdminUserDisabled(userId: string, isDisabled: boolean) 
   return {
     id: normalizedUserId,
     isDisabled,
+  };
+}
+
+export function normalizeAdminUserNote(value: unknown): string | null {
+  const normalized = String(value ?? '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length > ADMIN_USER_NOTE_MAX_LENGTH) {
+    throw new Error(`备注最多 ${ADMIN_USER_NOTE_MAX_LENGTH} 个字符`);
+  }
+  return normalized;
+}
+
+export async function setAdminUserNote(userId: string, adminNote: unknown) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    throw new Error('用户 ID 非法');
+  }
+
+  const normalizedNote = normalizeAdminUserNote(adminNote);
+  try {
+    const result = await executeSQL(
+      `
+        UPDATE users
+        SET
+          admin_note = {{admin_note}},
+          updated_at = ${NOW_UTC8_EXPR}
+        WHERE id = {{user_id}}
+          AND deleted_at <=> NULL
+      `,
+      {
+        user_id: normalizedUserId,
+        admin_note: normalizedNote,
+      }
+    );
+
+    if (result.affectedRows <= 0) {
+      throw new Error('user_not_found');
+    }
+  } catch (error) {
+    if (isMissingColumnError(error, 'admin_note')) {
+      throw new Error(ADMIN_USER_NOTE_MIGRATION_REQUIRED_MESSAGE);
+    }
+    throw error;
+  }
+
+  return {
+    id: normalizedUserId,
+    adminNote: normalizedNote,
   };
 }
 

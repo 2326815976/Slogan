@@ -1371,6 +1371,10 @@
           "field_description": "账号角色（user/admin）"
         },
         {
+          "field_name": "admin_note",
+          "field_description": "管理员内部备注"
+        },
+        {
           "field_name": "is_disabled",
           "field_description": "是否禁用"
         },
