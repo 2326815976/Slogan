@@ -28,11 +28,12 @@ export async function adminSpaces(page: number) {
 }
 export async function adminOptions(): Promise<AdminOptions> {
   const [users, albums] = await Promise.all([
-    rows(`SELECT u.id,p.name,u.phone,u.email,u.admin_note,m.space_id FROM users u LEFT JOIN profiles p ON p.id=u.id
+    rows(`SELECT u.id,p.name,u.phone,u.admin_note,m.space_id FROM users u LEFT JOIN profiles p ON p.id=u.id
       LEFT JOIN shiguang_members m ON m.user_id=u.id WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
     rows("SELECT id,title FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000' ORDER BY created_at DESC LIMIT 2000"),
   ]);
-  return { users: users.map(r => ({ id: String(r.id), name: String(r.name || '未命名用户'), label: [r.name, r.phone || r.email, r.admin_note].filter(Boolean).join(' · '), bound: Boolean(r.space_id) })), albums: albums.map(r => ({ id: String(r.id), title: String(r.title) })) };
+  // 管理员选人统一使用手机号和备注名，不暴露微信账号生成的邮箱。
+  return { users: users.map(r => ({ id: String(r.id), name: String(r.name || '未命名用户'), label: `${String(r.phone || '').trim() || '未绑定手机号'} · ${String(r.admin_note || '').trim() || '未设置备注'}`, bound: Boolean(r.space_id) })), albums: albums.map(r => ({ id: String(r.id), title: String(r.title) })) };
 }
 async function validateAdminImage(ref: string, adminId: string, spaceId?: string) {
   if (!ref) return;

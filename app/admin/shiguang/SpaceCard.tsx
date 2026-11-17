@@ -26,13 +26,13 @@ export default function SpaceCard({ space, busy, onEdit, onEditMember, onRemove 
         {space.members.map(member => <div className="sg-admin-member" key={member.userId}>
           {member.avatar ? <img src={member.avatar} alt="" className="sg-avatar" /> : <span className="sg-avatar sg-admin-avatar"><Heart size={18} /></span>}
           <div className="sg-admin-member-name"><span className="sg-muted">{member.role === 'boy' ? '男生' : '女生'}</span><strong>{member.name}</strong></div>
-          {!space.deletedAt && <button className="sg-link" disabled={busy} onClick={() => onEditMember(member)}>编辑资料</button>}
+          {!space.deletedAt && <button className="booking-pill-btn booking-pill-btn--ghost" disabled={busy} onClick={() => onEditMember(member)}>编辑资料</button>}
         </div>)}
       </div>
       <p className="sg-muted sg-admin-id">专属返图空间 · {space.albumId}</p>
       {!space.deletedAt && <div className="sg-admin-actions">
-        <button className="sg-button" disabled={busy} onClick={onEdit}><Pencil size={16} />编辑空间</button>
-        <button className="sg-link sg-danger" disabled={busy} onClick={onRemove}><Trash2 size={16} />删除空间</button>
+        <button className="booking-pill-btn booking-pill-btn--primary" disabled={busy} onClick={onEdit}><Pencil size={16} />编辑空间</button>
+        <button className="booking-pill-btn booking-pill-btn--danger" disabled={busy} onClick={onRemove}><Trash2 size={16} />删除空间</button>
       </div>}
     </div>
   </article>;

@@ -376,6 +376,11 @@ function requireAdmin(context: AuthContext): void {
   }
 }
 
+/** 以服务端会话角色为准，后台及管理员在用户端的操作均不计入图片统计。 */
+function shouldCountImageActivity(context: AuthContext): boolean {
+  return context.role !== 'admin' && context.role !== 'system';
+}
+
 // 统一按 UTC+8（Asia/Shanghai）计算“当前时间/当天日期”，避免依赖 DB 会话时区
 const NOW_UTC8_EXPR = 'DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR)';
 const TODAY_UTC8_EXPR = 'DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR))';
@@ -2452,9 +2457,9 @@ async function rpcIncrementPhotoView(args: Record<string, unknown>, context: Aut
     throw new Error('参数错误');
   }
 
-  const hasViewerIdentity = Boolean(userId || sessionId);
+  const hasViewerIdentity = shouldCountImageActivity(context) && Boolean(userId || sessionId);
   let alreadyViewed = false;
-  if (userId && sessionId) {
+  if (hasViewerIdentity && userId && sessionId) {
     const viewed = await executeSQL(
       `
         SELECT id
@@ -2470,7 +2475,7 @@ async function rpcIncrementPhotoView(args: Record<string, unknown>, context: Aut
       }
     );
     alreadyViewed = viewed.rows.length > 0;
-  } else if (userId) {
+  } else if (hasViewerIdentity && userId) {
     const viewed = await executeSQL(
       `
         SELECT id
@@ -2484,7 +2489,7 @@ async function rpcIncrementPhotoView(args: Record<string, unknown>, context: Aut
       }
     );
     alreadyViewed = viewed.rows.length > 0;
-  } else if (sessionId) {
+  } else if (hasViewerIdentity && sessionId) {
     const viewed = await executeSQL(
       `
         SELECT id
@@ -2598,7 +2603,7 @@ async function rpcIncrementPhotoView(args: Record<string, unknown>, context: Aut
   };
 }
 
-async function rpcIncrementPhotoDownload(args: Record<string, unknown>) {
+async function rpcIncrementPhotoDownload(args: Record<string, unknown>, context: AuthContext) {
   const photoId = String(args.p_photo_id ?? '').trim();
   const countInput = Number(args.p_count ?? 1);
   const incrementBy = Number.isFinite(countInput)
@@ -2618,7 +2623,7 @@ async function rpcIncrementPhotoDownload(args: Record<string, unknown>) {
   }
 
   try {
-    const updateResult = await executeSQL(
+    const updateResult = shouldCountImageActivity(context) ? await executeSQL(
       `
         UPDATE album_photos
         SET download_count = download_count + {{count}}
@@ -2628,7 +2633,7 @@ async function rpcIncrementPhotoDownload(args: Record<string, unknown>) {
         photo_id: photoId,
         count: incrementBy,
       }
-    );
+    ) : { affectedRows: 0 };
 
     const countResult = await executeSQL(
       `
@@ -2797,7 +2802,8 @@ async function rpcCheckDateAvailability(args: Record<string, unknown>) {
   return activeBookings.rows.length === 0;
 }
 
-async function rpcIncrementPoseView(args: Record<string, unknown>) {
+async function rpcIncrementPoseView(args: Record<string, unknown>, context: AuthContext) {
+  if (!shouldCountImageActivity(context)) return null;
   const poseId = toNumber(args.p_pose_id, 0);
   if (!poseId) {
     return null;
@@ -2817,7 +2823,8 @@ async function rpcIncrementPoseView(args: Record<string, unknown>) {
   return null;
 }
 
-async function rpcBatchIncrementPoseViews(args: Record<string, unknown>) {
+async function rpcBatchIncrementPoseViews(args: Record<string, unknown>, context: AuthContext) {
+  if (!shouldCountImageActivity(context)) return null;
   const poseViews = Array.isArray(args.pose_views) ? args.pose_views : [];
 
   for (const item of poseViews) {
@@ -4056,7 +4063,7 @@ export async function executeRpc(functionName: string, args: Record<string, unkn
         data = await rpcIncrementPhotoView(args, context);
         break;
       case 'increment_photo_download':
-        data = await rpcIncrementPhotoDownload(args);
+        data = await rpcIncrementPhotoDownload(args, context);
         break;
       case 'check_date_availability':
         data = await rpcCheckDateAvailability(args);
@@ -4065,10 +4072,10 @@ export async function executeRpc(functionName: string, args: Record<string, unkn
         data = await rpcValidateCity(args);
         break;
       case 'increment_pose_view':
-        data = await rpcIncrementPoseView(args);
+        data = await rpcIncrementPoseView(args, context);
         break;
       case 'batch_increment_pose_views':
-        data = await rpcBatchIncrementPoseViews(args);
+        data = await rpcBatchIncrementPoseViews(args, context);
         break;
       case 'get_random_poses_batch':
         data = await rpcGetRandomPosesBatch(args);
