@@ -1,4 +1,5 @@
 import 'server-only';
+import { normalizeOptionalAuthText } from '@/lib/auth/text';
 import { executeSQL } from '@/lib/cloudbase/sql-executor';
 import { ACTIVE_SPACE_SQL } from './access';
 import { callProcedure, rows, timestamp, type Row } from './db';
@@ -22,18 +23,32 @@ export async function summary(spaceId: string, userId: string, channel: 'web' | 
   return { userId, today, space: current, moods: moods.map(toEntry), balances: Object.fromEntries(wallets.map(r => [String(r.user_id), Number(r.balance)])), publishState: await publication(channel) === 'beta' ? 'beta' : 'online' };
 }
 export async function adminSpaces(page: number) {
-  const result = await rows(`SELECT * FROM shiguang_spaces ORDER BY created_at DESC,id DESC LIMIT 21 OFFSET ${integer(page, 0, 100000) * 20}`);
+  // 软删除空间不参与管理列表和分页，成员绑定与历史数据仍保留。
+  const result = await rows(`SELECT * FROM shiguang_spaces WHERE deleted_at <=> NULL ORDER BY created_at DESC,id DESC LIMIT 21 OFFSET ${integer(page, 0, 100000) * 20}`);
   const members = result.length ? await rows(`SELECT * FROM shiguang_members WHERE space_id IN (${result.map((_, i) => `{{s${i}}}`).join(',')})`, Object.fromEntries(result.map((r, i) => [`s${i}`, r.id]))) : [];
   return { items: result.slice(0, 20).map(r => space(r, members.filter(m => m.space_id === r.id).map(member))), hasMore: result.length > 20 };
 }
 export async function adminOptions(): Promise<AdminOptions> {
   const [users, albums] = await Promise.all([
-    rows(`SELECT u.id,p.name,u.phone,u.admin_note,m.space_id FROM users u LEFT JOIN profiles p ON p.id=u.id
+    rows(`SELECT u.id,p.name,u.phone,p.phone AS profile_phone,u.admin_note,m.space_id FROM users u LEFT JOIN profiles p ON p.id=u.id
       LEFT JOIN shiguang_members m ON m.user_id=u.id WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
     rows("SELECT id,title,access_key FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000' ORDER BY created_at DESC LIMIT 2000"),
   ]);
   // 选项显示 ID 后 6 位、手机号和备注，完整 ID 保留用于检索与绑定。
-  return { users: users.map(r => ({ id: String(r.id), name: String(r.name || '未命名用户'), label: `${String(r.id).slice(-6)} · ${String(r.phone || '').trim() || '未绑定手机号'} · ${String(r.admin_note || '').trim() || '未设置备注'}`, bound: Boolean(r.space_id) })), albums: albums.map(r => ({ id: String(r.id), title: String(r.title), label: `${String(r.title)} · ${String(r.access_key || '').trim() || '未设置密钥'}` })) };
+  return {
+    users: users.map(r => {
+      // 优先展示注册/登录手机号；回退资料号码时标明来源，过滤历史 "null" 等占位值。
+      const registeredPhone = normalizeOptionalAuthText(r.phone);
+      const profilePhone = normalizeOptionalAuthText(r.profile_phone);
+      const phone = registeredPhone || (profilePhone ? `资料：${profilePhone}` : '未绑定手机号');
+      return {
+        id: String(r.id), name: String(r.name || '未命名用户'),
+        label: `${String(r.id).slice(-6)} · ${phone} · ${String(r.admin_note || '').trim() || '未设置备注'}`,
+        bound: Boolean(r.space_id),
+      };
+    }),
+    albums: albums.map(r => ({ id: String(r.id), title: String(r.title), label: `${String(r.title)} · ${String(r.access_key || '').trim() || '未设置密钥'}` })),
+  };
 }
 async function validateAdminImage(ref: string, adminId: string, spaceId?: string) {
   if (!ref) return;
