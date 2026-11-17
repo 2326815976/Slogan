@@ -45,5 +45,5 @@ export interface ShiguangSummary {
 export interface PageResult<T> { items: T[]; hasMore: boolean }
 export interface AdminOptions {
   users: { id: string; name: string; label: string; bound: boolean }[];
-  albums: { id: string; title: string }[];
+  albums: { id: string; title: string; label: string }[];
 }

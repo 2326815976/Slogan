@@ -1,7 +1,5 @@
-/* 参照专属空间管理：封面卡片、状态胶囊、柔和边框及圆角操作按钮。 */
-.sg-admin { max-width:1200px; }
-.sg-admin-header { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; padding-bottom:8px; }
-.sg-admin-header h1 { font-size:24px; font-weight:700; }
+/* 页面留白、标题和工具栏复用专属空间管理，不再叠加内容面板。 */
+.sg-admin { color:#5D4037; }
 .sg-admin .booking-pill-btn { gap:6px; }
 .sg-admin .sg-card { border:1px solid #5d40371f; box-shadow:0 4px 16px #5d403708; }
 .sg-admin-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
@@ -32,4 +30,4 @@
 .sg-admin-upload { position:relative; align-self:flex-start; cursor:pointer; overflow:hidden; }
 .sg-admin-upload input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
 .sg-admin-upload:focus-within { outline:2px solid #5D4037; outline-offset:2px; }
-@media(max-width:700px) { .sg-admin-list { grid-template-columns:1fr; gap:20px; } .sg-admin-header h1 { font-size:21px; } }
+@media(max-width:700px) { .sg-admin-list { grid-template-columns:1fr; gap:20px; } }

@@ -30,10 +30,10 @@ export async function adminOptions(): Promise<AdminOptions> {
   const [users, albums] = await Promise.all([
     rows(`SELECT u.id,p.name,u.phone,u.admin_note,m.space_id FROM users u LEFT JOIN profiles p ON p.id=u.id
       LEFT JOIN shiguang_members m ON m.user_id=u.id WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
-    rows("SELECT id,title FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000' ORDER BY created_at DESC LIMIT 2000"),
+    rows("SELECT id,title,access_key FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000' ORDER BY created_at DESC LIMIT 2000"),
   ]);
-  // 管理员选人统一使用手机号和备注名，不暴露微信账号生成的邮箱。
-  return { users: users.map(r => ({ id: String(r.id), name: String(r.name || '未命名用户'), label: `${String(r.phone || '').trim() || '未绑定手机号'} · ${String(r.admin_note || '').trim() || '未设置备注'}`, bound: Boolean(r.space_id) })), albums: albums.map(r => ({ id: String(r.id), title: String(r.title) })) };
+  // 选项显示 ID 后 6 位、手机号和备注，完整 ID 保留用于检索与绑定。
+  return { users: users.map(r => ({ id: String(r.id), name: String(r.name || '未命名用户'), label: `${String(r.id).slice(-6)} · ${String(r.phone || '').trim() || '未绑定手机号'} · ${String(r.admin_note || '').trim() || '未设置备注'}`, bound: Boolean(r.space_id) })), albums: albums.map(r => ({ id: String(r.id), title: String(r.title), label: `${String(r.title)} · ${String(r.access_key || '').trim() || '未设置密钥'}` })) };
 }
 async function validateAdminImage(ref: string, adminId: string, spaceId?: string) {
   if (!ref) return;

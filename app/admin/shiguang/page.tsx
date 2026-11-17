@@ -75,22 +75,28 @@ export default function Page() {
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
 
-  return <div className="sg-content sg-stack sg-admin">
-    <div className="sg-admin-header">
-      <h1>拾光空间管理</h1>
-      <button className="booking-pill-btn booking-pill-btn--primary" disabled={busy} onClick={() => open()}><Plus size={16} />添加空间</button>
+  return <div className="admin-mobile-page album-admin-page space-y-6 pt-6 sg-admin">
+    <div className="module-intro album-page-intro">
+      <h1 className="module-title">拾光空间管理</h1>
     </div>
-    {error && editing === undefined && !member && <p role="alert" className="sg-error">{error}</p>}
-    {!items.length && <div className="sg-card sg-admin-empty">{loading ? '加载中…' : '暂无拾光空间'}</div>}
-    <div className="sg-admin-list">{items.map(space => <SpaceCard key={space.id} space={space} busy={busy}
-      onEdit={() => open(space)}
-      onEditMember={value => { setError(''); setMember({ space: space.id, member: { ...value } }); }}
-      onRemove={() => void remove(space)} />)}</div>
-    {(page > 0 || more) && <div className="booking-pagination">
-      <button disabled={!page || busy || loading} className="booking-page-btn booking-page-btn--ghost" onClick={() => void load(page - 1).catch(e => setError(e.message))}>上一页</button>
-      <span className="booking-page-indicator">第 {page + 1} 页</span>
-      <button disabled={!more || busy || loading} className="booking-page-btn booking-page-btn--ghost" onClick={() => void load(page + 1).catch(e => setError(e.message))}>下一页</button>
-    </div>}
+    <div className="album-panel">
+      <div className="booking-toolbar album-toolbar">
+        <div className="booking-toolbar-actions booking-toolbar-actions--right">
+          <button className="booking-pill-btn booking-pill-btn--primary" disabled={busy} onClick={() => open()}><Plus size={16} />添加空间</button>
+        </div>
+      </div>
+      {error && editing === undefined && !member && <p role="alert" className="sg-error">{error}</p>}
+      {!items.length && <div className="sg-admin-empty">{loading ? '加载中…' : '暂无拾光空间'}</div>}
+      <div className="sg-admin-list">{items.map(space => <SpaceCard key={space.id} space={space} busy={busy}
+        onEdit={() => open(space)}
+        onEditMember={value => { setError(''); setMember({ space: space.id, member: { ...value } }); }}
+        onRemove={() => void remove(space)} />)}</div>
+      {(page > 0 || more) && <div className="booking-pagination">
+        <button disabled={!page || busy || loading} className="booking-page-btn booking-page-btn--ghost" onClick={() => void load(page - 1).catch(e => setError(e.message))}>上一页</button>
+        <span className="booking-page-indicator">第 {page + 1} 页</span>
+        <button disabled={!more || busy || loading} className="booking-page-btn booking-page-btn--ghost" onClick={() => void load(page + 1).catch(e => setError(e.message))}>下一页</button>
+      </div>}
+    </div>
 
     {editing !== undefined && <AdminDialog title={editing ? '编辑拾光空间' : '创建拾光空间'} busy={busy} disabled={!form.cover} error={error} submitLabel="保存空间" onClose={close} onSubmit={save}>
       <label className="booking-modal__field"><span className="booking-modal__label">名称</span><input className="booking-modal__input" required maxLength={100} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
@@ -100,12 +106,12 @@ export default function Page() {
       </div>
       <label className="booking-modal__field"><span className="booking-modal__label">状态</span><select className="booking-modal__input" value={String(form.enabled)} onChange={e => setForm(f => ({ ...f, enabled: e.target.value === 'true' }))}><option value="true">启用</option><option value="false">禁用</option></select></label>
       <label className="booking-modal__field"><span className="booking-modal__label">信件</span><textarea className="booking-modal__textarea" maxLength={20000} value={form.letter} onChange={e => setForm(f => ({ ...f, letter: e.target.value }))} /></label>
-      <label className="booking-modal__field"><span className="booking-modal__label">绑定专属返图空间</span><select className="booking-modal__input" required value={form.albumId} onChange={e => setForm(f => ({ ...f, albumId: e.target.value }))}><option value="">请选择</option>{options.albums.map(a => <option key={a.id} value={a.id}>{a.title} · {a.id}</option>)}</select></label>
+      <label className="booking-modal__field"><span className="booking-modal__label">绑定专属返图空间</span><select className="booking-modal__input" required value={form.albumId} onChange={e => setForm(f => ({ ...f, albumId: e.target.value }))}><option value="">请选择</option>{options.albums.map(a => <option key={a.id} value={a.id}>{a.label || a.title}</option>)}</select></label>
       {!editing && <>
-        <label className="booking-modal__field"><span className="booking-modal__label">筛选用户</span><input className="booking-modal__input" value={query} onChange={e => setQuery(e.target.value)} placeholder="手机号、备注名" /></label>
+        <label className="booking-modal__field"><span className="booking-modal__label">筛选用户</span><input className="booking-modal__input" value={query} onChange={e => setQuery(e.target.value)} placeholder="输入用户 ID（支持后 6 位）" /></label>
         {(['boyId', 'girlId'] as const).map(key => <label className="booking-modal__field" key={key}><span className="booking-modal__label">{key === 'boyId' ? '男生' : '女生'}</span><select className="booking-modal__input" required value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}>
           <option value="">请选择用户</option>
-          {options.users.filter(u => !u.bound && (u.label.toLowerCase().includes(query.trim().toLowerCase()) || form[key] === u.id)).map(u => <option key={u.id} value={u.id} disabled={form[key === 'boyId' ? 'girlId' : 'boyId'] === u.id}>{u.label}</option>)}
+          {options.users.filter(u => !u.bound && (u.id.toLowerCase().includes(query.trim().toLowerCase()) || form[key] === u.id)).map(u => <option key={u.id} value={u.id} disabled={form[key === 'boyId' ? 'girlId' : 'boyId'] === u.id}>{u.label}</option>)}
         </select></label>)}
       </>}
     </AdminDialog>}
