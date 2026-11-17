@@ -42,7 +42,8 @@
     "react-window": "^2.2.6",
     "svg-captcha": "^1.4.0",
     "swr": "^2.4.0",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "tencentcloud-sdk-nodejs-tcb": "4.1.344"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",

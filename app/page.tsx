@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
 import PoseViewer from './PoseViewer';
 import { buildWebShellRuntime } from '@/lib/page-center/runtime';
+import { getSessionUserFromServerCookies } from '@/lib/auth/context';
+import { withSpaceNavigation } from '@/lib/shiguang/navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,15 +23,16 @@ export default async function HomePage({
   const isPreviewMode = presentation === 'preview' && Boolean(pageKey);
 
   if (!isPreviewMode) {
+    let homePath = '/';
     try {
-      const runtime = await buildWebShellRuntime();
-      const homePath = String(runtime.homePath || '/').trim();
-      if (homePath && homePath !== '/') {
-        redirect(homePath);
-      }
-    } catch {
+      const user = await getSessionUserFromServerCookies();
+      const runtime = await withSpaceNavigation(await buildWebShellRuntime(), user?.id);
+      homePath = String(runtime.homePath || '/').trim();
+    } catch (error) {
+      console.error('[home] 读取默认入口失败', error instanceof Error ? error.message : 'unknown');
       // 运行时读取失败时，回退为默认首页内容
     }
+    if (homePath && homePath !== '/') redirect(homePath);
   }
 
   return <PoseViewer initialTags={[]} initialPose={null} initialPoses={[]} />;

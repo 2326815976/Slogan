@@ -37,6 +37,9 @@ next-env.d.ts
 # docs
 /docs
 
+# backup
+/backup
+
 # scripts
 /scripts
 
@@ -45,3 +48,6 @@ next-env.d.ts
 /.spec-workflow
 /.tmp
 /.codex-run
+
+# local validation artifacts
+/tests/

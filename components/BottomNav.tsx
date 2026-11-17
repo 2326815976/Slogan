@@ -8,6 +8,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { vibrate } from '@/lib/android';
 import { isAndroidApp } from '@/lib/platform';
 import type { WebShellRuntime } from '@/lib/page-center/config';
+import { createLucideIcon } from 'lucide-react';
+
+const DoubleHeart = createLucideIcon('DoubleHeart', [
+  ['path', { d: 'M13 20 3.5 11a5 5 0 0 1 7-7L13 6l2.5-2a5 5 0 0 1 7 7L13 20Z', key: 'main' }],
+  ['path', { d: 'm8 20-5-5a3 3 0 0 1 4-4l1 1 1-1a3 3 0 0 1 4 4l-5 5Z', key: 'small' }],
+]);
 
 interface BottomNavProps {
   hidden?: boolean;
@@ -16,6 +22,7 @@ interface BottomNavProps {
 }
 
 const ICON_COMPONENT_MAP: Record<string, typeof User> = {
+  hearts: DoubleHeart,
   home: Home,
   album: Lock,
   gallery: Image,

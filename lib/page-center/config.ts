@@ -105,7 +105,7 @@ export interface WebNavItem {
   label: string;
   guestLabel: string;
   href: string;
-  iconKey: MiniProgramIconKey | 'profile';
+  iconKey: MiniProgramIconKey | 'profile' | 'hearts';
   isHomeEntry: boolean;
 }
 
@@ -219,6 +219,14 @@ export function isRemovedAppPageKey(input: unknown): boolean {
 }
 
 export const BUILT_IN_APP_PAGES: BuiltInAppPageDefinition[] = [
+  {
+    pageKey: 'shiguang', pageName: '拾光空间', pageDescription: '仅绑定的两名成员可见的拾光空间',
+    routePathWeb: '/shiguang', routePathMiniProgram: 'pages/shiguang/index',
+    previewRoutePathWeb: '/shiguang?presentation=preview&page_key=shiguang',
+    previewRoutePathMiniProgram: '/pages/shiguang/index?presentation=preview&page_key=shiguang',
+    tabKey: null, iconKey: 'album', defaultTabText: '拾光', defaultGuestTabText: '拾光',
+    isNavCandidateWeb: false, isTabCandidateMiniProgram: false, supportsBeta: true, supportsPreview: true, isBuiltIn: true,
+  },
   {
     pageKey: 'pose',
     pageName: '摆姿推荐',
@@ -624,7 +632,7 @@ export function createFallbackMiniProgramRuleMap(runtimeConfig: MiniProgramRunti
       id: index + 1,
       pageKey: page.pageKey,
       channel: 'miniprogram',
-      publishState: matched ? 'online' : 'offline',
+      publishState: matched || page.pageKey === 'shiguang' ? 'online' : 'offline',
       showInNav: Boolean(matched),
       navOrder: matched ? matched.index : 99,
       navText: matched ? matched.item.text : page.defaultTabText,
@@ -659,6 +667,7 @@ export function createFallbackMiniProgramRuleMap(runtimeConfig: MiniProgramRunti
 
 export function createFallbackWebRuleMap(): Map<string, AppPagePublishRuleItem> {
   const map = new Map<string, AppPagePublishRuleItem>();
+  map.set('shiguang', { id: 0, pageKey: 'shiguang', channel: 'web', publishState: 'online', showInNav: false, navOrder: -1, navText: '拾光', guestNavText: '拾光', headerTitle: '', headerSubtitle: '', isHomeEntry: false, notes: '入口由成员绑定动态决定', updatedAt: '' });
   DEFAULT_WEB_NAV_RULES.forEach((item, index) => {
     map.set(item.pageKey, {
       id: index + 1,

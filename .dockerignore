@@ -3,6 +3,8 @@
 .next
 .tmp
 .codex-run
+backup
+tests
 .serena
 .spec-workflow
 coverage

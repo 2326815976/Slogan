@@ -53,6 +53,7 @@ const navSections: AdminNavSection[] = [
       { href: '/admin/schedule', label: '档期管理', desc: '锁档日期', icon: '🗓️' },
       { href: '/admin/gallery', label: '照片墙管理', desc: '公开图集', icon: '🖼️' },
       { href: '/admin/albums', label: '专属空间管理', desc: '返图空间', icon: '💐' },
+      { href: '/admin/shiguang', label: '拾光空间管理', desc: '两人拾光空间', icon: '💕' },
       { href: '/admin/about', label: '关于设置', desc: '作者信息', icon: 'ℹ️' },
     ],
   },

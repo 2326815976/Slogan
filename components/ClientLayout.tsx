@@ -116,6 +116,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const authSyncPendingRef = useRef<Promise<void> | null>(null);
   const runtimeFetchAtRef = useRef(0);
   const runtimeFetchPendingRef = useRef<Promise<void> | null>(null);
+  const entryResolvedRef = useRef(false);
+
+  useEffect(() => {
+    if (!shellRuntime || entryResolvedRef.current || isAdminRoute) return;
+    entryResolvedRef.current = true;
+    if (shellRuntime.homePath === '/shiguang' && pathname !== '/shiguang' && shellRuntime.navItems.some(item => item.href === pathname)) router.replace('/shiguang');
+  }, [shellRuntime, pathname, isAdminRoute, router]);
 
   const previewPageKey = String(searchParams?.get('page_key') || '').trim();
   const presentation = String(searchParams?.get('presentation') || '').trim();
@@ -129,6 +136,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   );
   const shellRuntimeResolved = shellRuntime !== undefined;
   const bottomNavHidden =
+    pathname.startsWith('/shiguang/') ||
     isPreviewMode ||
     isBetaMode ||
     routeGuardLoading ||
@@ -360,14 +368,16 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     };
     window.addEventListener('focus', refreshVisibleRuntime);
     document.addEventListener('visibilitychange', refreshVisibleRuntime);
+    const spaceNavigationTimer = setInterval(refreshVisibleRuntime, 15000);
 
     return () => {
       cancelled = true;
       window.removeEventListener('focus', refreshVisibleRuntime);
       document.removeEventListener('visibilitychange', refreshVisibleRuntime);
+      clearInterval(spaceNavigationTimer);
       runtimeFetchPendingRef.current = null;
     };
-  }, [isAdminRoute, pathname, runtimeReloadKey]);
+  }, [isAdminRoute, pathname, runtimeReloadKey, isAuthenticated]);
 
   useEffect(() => {
     if (isAdminRoute) {

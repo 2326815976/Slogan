@@ -16,6 +16,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import PreviewAwareScrollArea from '@/components/PreviewAwareScrollArea';
 import PrimaryPageShell from '@/components/shell/PrimaryPageShell';
+import SecondaryPageShell from '@/components/shell/SecondaryPageShell';
 import Toast from '@/components/ui/Toast';
 import { useManagedPageMeta } from '@/lib/page-center/use-managed-page-meta';
 import { isAndroidApp } from '@/lib/platform';
@@ -39,7 +40,7 @@ type ToastState = {
 
 type CaptureWallSortMode = 'latest' | 'oldest';
 
-type CaptureWallCard = {
+export type CaptureWallCard = {
   id: string;
   title: string;
   sourceName: string;
@@ -50,7 +51,17 @@ type CaptureWallCard = {
   locationLabel: string;
   storyText: string;
   styleIndex: number;
+  createdBy?: string;
+  creatorName?: string;
+  version?: number;
 };
+
+export interface CaptureStorage {
+  userId: string;
+  load: () => Promise<CaptureWallCard[]>;
+  save: (card: CaptureWallCard, create: boolean) => Promise<CaptureWallCard>;
+  remove: (card: CaptureWallCard) => Promise<void>;
+}
 
 type DemoWallCard = {
   id: string;
@@ -616,7 +627,7 @@ function CaptureWallGridItem({
   );
 }
 
-export default function CaptureLabPage() {
+export default function CaptureLabPage({ storage }: { storage?: CaptureStorage }) {
   const { title } = useManagedPageMeta('capture-lab', '拾物采集');
   const captureObjectUrlsRef = useRef<Set<string>>(new Set());
   const warmupTimeoutRef = useRef<number | null>(null);
@@ -642,11 +653,21 @@ export default function CaptureLabPage() {
   const [draftLocationLabel, setDraftLocationLabel] = useState('');
   const [draftDateTime, setDraftDateTime] = useState('');
   const [draftStoryText, setDraftStoryText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  useEffect(() => {
+    if (!storage) return;
+    let active = true;
+    storage.load().then(rows => { if (active) setCards(rows); }).catch(error => { if (active) setErrorMessage(error.message); });
+    return () => { active = false; };
+  }, [storage]);
+  const canEditCard = (card: CaptureWallCard) => !storage || card.createdBy === storage.userId;
+  const PageShell = storage ? SecondaryPageShell : PrimaryPageShell;
 
   const orderedCards = sortMode === 'oldest' ? cards.slice().reverse() : cards;
   const selectedDeleteIdSet = new Set(selectedDeleteIds);
   const fillerCards =
-    orderedCards.length >= DEMO_WALL_CARDS.length
+    storage || orderedCards.length >= DEMO_WALL_CARDS.length
       ? []
       : DEMO_WALL_CARDS.slice(orderedCards.length);
   const previewCard = pendingCard || activeCard;
@@ -840,12 +861,16 @@ export default function CaptureLabPage() {
     });
   };
 
-  const collectPendingCard = () => {
-    if (!pendingCard) {
+  const collectPendingCard = async () => {
+    if (!pendingCard || savingRef.current) {
       return;
     }
-
-    setCards((current) => [pendingCard, ...current]);
+    savingRef.current = true; setSaving(true);
+    let saved = pendingCard;
+    try { if (storage) saved = await storage.save(pendingCard, true); }
+    catch (error) { setToast({ type: 'error', message: (error as Error).message }); return; }
+    finally { savingRef.current = false; setSaving(false); }
+    setCards((current) => [saved, ...current]);
     setPendingCard(null);
     setIsPreviewStoryOpen(false);
     setToast({
@@ -861,6 +886,8 @@ export default function CaptureLabPage() {
   };
 
   const toggleDeleteSelection = (cardId: string) => {
+    const card = cards.find(item => item.id === cardId);
+    if (card && !canEditCard(card)) { setToast({ type: 'info', message: '只能删除自己采集的小物' }); return; }
     setSelectedDeleteIds((current) =>
       current.includes(cardId)
         ? current.filter((id) => id !== cardId)
@@ -899,7 +926,16 @@ export default function CaptureLabPage() {
     setIsDeleteConfirmOpen(true);
   };
 
-  const confirmDeleteSelection = () => {
+  const confirmDeleteSelection = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true; setSaving(true);
+    try {
+      if (storage) for (const card of cards.filter(card => selectedDeleteIdSet.has(card.id))) {
+        await storage.remove(card);
+        setCards(current => current.filter(item => item.id !== card.id));
+      }
+    } catch (error) { setToast({ type: 'error', message: (error as Error).message }); return; }
+    finally { savingRef.current = false; setSaving(false); }
     const deletingCount = selectedDeleteIds.length;
     cards.forEach((card) => {
       if (selectedDeleteIdSet.has(card.id)) {
@@ -914,15 +950,26 @@ export default function CaptureLabPage() {
     });
   };
 
-  const savePreviewEdits = () => {
-    if (!activeCard) {
+  const savePreviewEdits = async () => {
+    if (!activeCard || !canEditCard(activeCard) || savingRef.current) {
       return;
     }
 
     const nextTitle = String(draftTitle || '').trim() || '待命名小物';
     const nextLocation = normalizeLocationLabel(draftLocationLabel) || DEFAULT_LOCATION_LABEL;
-    const nextCreatedAt = parseDateInput(draftDateTime, activeCard.createdAt);
+    const nextCreatedAt = storage ? activeCard.createdAt : parseDateInput(draftDateTime, activeCard.createdAt);
     const nextStoryText = String(draftStoryText || '').trim();
+
+    if (storage) {
+      savingRef.current = true; setSaving(true);
+      try {
+        const saved = await storage.save({ ...activeCard, title: nextTitle, locationLabel: nextLocation, storyText: nextStoryText }, false);
+        setCards(current => current.map(card => card.id === saved.id ? saved : card));
+        setActiveCard(saved); setIsEditorOpen(false); setToast({ type: 'success', message: '小物已保存到我们的空间' });
+      } catch (error) { setToast({ type: 'error', message: (error as Error).message }); }
+      finally { savingRef.current = false; setSaving(false); }
+      return;
+    }
 
     setCards((current) =>
       current.map((card) =>
@@ -962,7 +1009,7 @@ export default function CaptureLabPage() {
   };
 
   const openEditorModal = () => {
-    if (!activeCard) {
+    if (!activeCard || !canEditCard(activeCard)) {
       return;
     }
 
@@ -974,9 +1021,10 @@ export default function CaptureLabPage() {
   };
 
   return (
-    <PrimaryPageShell
+    <PageShell
       title={title}
-      badge="本地会话"
+      badge={storage ? undefined : '本地会话'}
+      {...(storage ? { fallbackHref: '/shiguang' } : {})}
       className="h-full w-full"
       contentClassName="min-h-0"
     >
@@ -1046,7 +1094,7 @@ export default function CaptureLabPage() {
                   subjectWidth={card.subjectWidth}
                   subjectHeight={card.subjectHeight}
                   locationLabel={card.locationLabel}
-                  dateLabel={formatCardDate(card.createdAt)}
+                  dateLabel={[formatCardDate(card.createdAt), card.creatorName].filter(Boolean).join(' · ')}
                   storyText={card.storyText}
                   variant="wall"
                 />
@@ -1272,7 +1320,7 @@ export default function CaptureLabPage() {
                 subjectWidth={previewCard.subjectWidth}
                 subjectHeight={previewCard.subjectHeight}
                 locationLabel={previewCard.locationLabel}
-                dateLabel={formatCardDate(previewCard.createdAt)}
+                dateLabel={[formatCardDate(previewCard.createdAt), previewCard.creatorName].filter(Boolean).join(' · ')}
                 storyText={isPendingPreview ? '' : previewCard.storyText}
                 variant="detail"
                 storyOpen={isPendingPreview ? false : isPreviewStoryOpen}
@@ -1295,6 +1343,7 @@ export default function CaptureLabPage() {
                       <button
                         type="button"
                         onClick={collectPendingCard}
+                        disabled={saving}
                         className="inline-flex items-center justify-center rounded-[20px] bg-[#FFC857] px-4 py-3 text-sm font-bold text-[#5D4037] shadow-[0_4px_0_#D39C1C] transition-all hover:translate-y-[1px] hover:shadow-[0_3px_0_#D39C1C]"
                       >
                         收集
@@ -1305,6 +1354,7 @@ export default function CaptureLabPage() {
                       <button
                         type="button"
                         onClick={openEditorModal}
+                        disabled={saving || !canEditCard(previewCard)}
                         className="inline-flex items-center justify-center gap-2 rounded-[20px] bg-[#5D4037] px-4 py-3 text-sm font-bold text-[#FFF8EE] shadow-[0_4px_0_#452F28] transition-all hover:translate-y-[1px] hover:shadow-[0_3px_0_#452F28]"
                       >
                         编辑
@@ -1382,6 +1432,7 @@ export default function CaptureLabPage() {
                   </span>
                   <input
                     type="date"
+                    disabled={Boolean(storage)}
                     value={draftDateTime}
                     onChange={(event) => setDraftDateTime(event.target.value)}
                     className="w-full rounded-[18px] border border-[#D9C4A9] bg-white px-4 py-3 text-sm font-semibold text-[#17120F] outline-none transition-colors focus:border-[#C48B5A]"
@@ -1405,6 +1456,7 @@ export default function CaptureLabPage() {
                 <button
                   type="button"
                   onClick={savePreviewEdits}
+                  disabled={saving}
                   className="inline-flex items-center justify-center rounded-[20px] bg-[#5D4037] px-4 py-3 text-sm font-bold text-[#FFF8EE] shadow-[0_4px_0_#452F28] transition-all hover:translate-y-[1px] hover:shadow-[0_3px_0_#452F28]"
                 >
                   保存
@@ -1441,6 +1493,6 @@ export default function CaptureLabPage() {
           onClose={() => setToast(null)}
         />
       ) : null}
-    </PrimaryPageShell>
+    </PageShell>
   );
 }
