@@ -34,7 +34,13 @@ export default function Page() {
     if (!file || busy) return;
     setBusy(true); setError('');
     try {
-      const url = await uploadSpaceMedia(file, true);
+      let uploadFile = file;
+      if (!avatar) {
+        // 与专属空间封面共用上传前压缩，后续仍走空间私有媒体链路。
+        const { compressImage } = await import('@/lib/utils/image-compression');
+        uploadFile = await compressImage(file);
+      }
+      const url = await uploadSpaceMedia(uploadFile, true);
       if (avatar) setMember(m => m && ({ ...m, member: { ...m.member, avatar: url } }));
       else setForm(f => ({ ...f, cover: url }));
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
@@ -69,9 +75,12 @@ export default function Page() {
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function remove(space: ShiguangSpace) {
-    if (busy || !confirm('删除后将停止双方访问，保留永久绑定和全部历史数据。确认删除？')) return;
+    if (busy || !confirm('删除后停止双方访问，保留历史数据，两名成员可加入新空间。确认删除？')) return;
     setBusy(true); setError('');
-    try { await spaceRequest(`admin/shiguang/${space.id}`, 'DELETE', { version: space.version }); await load(page); }
+    try {
+      await spaceRequest(`admin/shiguang/${space.id}`, 'DELETE', { version: space.version });
+      await Promise.all([load(page), spaceRequest<AdminOptions>('admin/shiguang?options=1').then(setOptions)]);
+    }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
 

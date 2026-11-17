@@ -10,7 +10,7 @@ export async function rows(sql: string, params: Record<string, unknown> = {}): P
 }
 // 数据模型 SDK 不支持 CALL；仅事务过程使用官方 RunSql，其余查询沿用 SQL 执行器。
 // 字符串按 UTF-8 十六进制编码，过程名固定，禁止传入任意 SQL。
-export async function callProcedure(name: 'shiguang_create_v1' | 'shiguang_ticket_v1', args: (string | number)[]): Promise<void> {
+export async function callProcedure(name: 'shiguang_create_v2' | 'shiguang_ticket_v1', args: (string | number)[]): Promise<void> {
   const values = args.map(value => typeof value === 'number'
     ? String(value)
     : `CONVERT(X'${Buffer.from(value, 'utf8').toString('hex')}' USING utf8mb4)`);
@@ -27,7 +27,7 @@ export function timestamp(value: unknown): string {
   return s && !/[zZ]|[+-]\d{2}:\d{2}$/.test(s) ? `${s.replace(' ', 'T')}Z` : s;
 }
 const ERROR_MESSAGES: Record<string, string> = {
-  SG_DIFFERENT_USERS: '男生和女生必须是不同账号', SG_USER_BOUND: '所选用户已绑定拾光空间，禁用或删除后也不能重新绑定',
+  SG_DIFFERENT_USERS: '男生和女生必须是不同账号', SG_USER_BOUND: '所选用户已绑定未删除的拾光空间，禁用空间仍占用绑定',
   SG_USER_UNAVAILABLE: '所选用户不存在或已禁用', SG_ADMIN_REQUIRED: '需要管理员权限', SG_ALBUM_UNAVAILABLE: '请选择现存的专属返图空间',
   SG_REQUEST_CONFLICT: '该请求编号已用于其他操作，请刷新后重试', SG_SPACE_UNAVAILABLE: '拾光空间已禁用或删除', SG_MEMBER_REQUIRED: '仅空间成员可访问',
   SG_INVALID_AMOUNT: '每次可给予 1 至 1000 次机会', SG_BALANCE_LIMIT: '对方剩余次数已达到上限', SG_NO_CHANCES: '抽奖次数不足',

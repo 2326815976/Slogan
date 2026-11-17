@@ -30,8 +30,12 @@ export async function adminSpaces(page: number) {
 }
 export async function adminOptions(): Promise<AdminOptions> {
   const [users, albums] = await Promise.all([
-    rows(`SELECT u.id,p.name,u.phone,p.phone AS profile_phone,u.admin_note,m.space_id FROM users u LEFT JOIN profiles p ON p.id=u.id
-      LEFT JOIN shiguang_members m ON m.user_id=u.id WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
+    // 历史成员可以保留多条；仅未删除空间占用用户，EXISTS 避免选项重复。
+    rows(`SELECT u.id,p.name,u.phone,p.phone AS profile_phone,u.admin_note,
+      EXISTS(SELECT 1 FROM shiguang_members m JOIN shiguang_spaces s ON s.id=m.space_id
+        WHERE m.user_id=u.id AND s.deleted_at <=> NULL) AS bound
+      FROM users u LEFT JOIN profiles p ON p.id=u.id
+      WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
     rows("SELECT id,title,access_key FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000' ORDER BY created_at DESC LIMIT 2000"),
   ]);
   // 选项显示 ID 后 6 位、手机号和备注，完整 ID 保留用于检索与绑定。
@@ -44,7 +48,7 @@ export async function adminOptions(): Promise<AdminOptions> {
       return {
         id: String(r.id), name: String(r.name || '未命名用户'),
         label: `${String(r.id).slice(-6)} · ${phone} · ${String(r.admin_note || '').trim() || '未设置备注'}`,
-        bound: Boolean(r.space_id),
+        bound: Boolean(Number(r.bound)),
       };
     }),
     albums: albums.map(r => ({ id: String(r.id), title: String(r.title), label: `${String(r.title)} · ${String(r.access_key || '').trim() || '未设置密钥'}` })),
@@ -63,7 +67,7 @@ export async function createSpace(adminId: string, data: Record<string, unknown>
   const name = text(data.name, '空间名称', 100), cover = mediaReference(data.cover, true), letter = text(data.letter, '信件', 20000, false);
   if (typeof data.enabled !== 'boolean') throw new ShiguangError('空间状态错误');
   await validateAdminImage(cover, adminId);
-  await callProcedure('shiguang_create_v1', [id, adminId, boyId, girlId, name, cover, letter, albumId, data.enabled ? 1 : 0]);
+  await callProcedure('shiguang_create_v2', [id, adminId, boyId, girlId, name, cover, letter, albumId, data.enabled ? 1 : 0]);
   return getSpace(id);
 }
 export async function updateSpace(adminId: string, id: string, data: Record<string, unknown>, remove = false) {
@@ -72,7 +76,10 @@ export async function updateSpace(adminId: string, id: string, data: Record<stri
   if ('boyId' in data || 'girlId' in data) throw new ShiguangError('成员绑定后不可解绑或换绑');
   const version = integer(data.version, 1, 2147483647);
   if (remove) {
-    const result = await executeSQL('UPDATE shiguang_spaces SET enabled=0,deleted_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3),version=version+1 WHERE id={{id}} AND version={{version}} AND deleted_at <=> NULL', { id, version });
+    // 同一语句原子停止访问并释放占用，保留历史成员资料和独立钱包。
+    const result = await executeSQL(`UPDATE shiguang_spaces s JOIN shiguang_members m ON m.space_id=s.id
+      SET s.enabled=0,s.deleted_at=UTC_TIMESTAMP(3),s.updated_at=UTC_TIMESTAMP(3),s.version=s.version+1,m.released_at=UTC_TIMESTAMP(3)
+      WHERE s.id={{id}} AND s.version={{version}} AND s.deleted_at <=> NULL`, { id, version });
     if (!result.affectedRows) throw new ShiguangError('空间已变化，请刷新', 409);
     return { id };
   }
