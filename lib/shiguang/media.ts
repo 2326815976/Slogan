@@ -71,8 +71,9 @@ export async function uploadMedia(request: Request) {
   const id = randomUUID();
   const result = await getCloudBaseApp().uploadFile({ cloudPath: `shiguang/${id}.bin`, fileContent: encryptMedia(buffer) }) as { fileID?: string };
   if (!result.fileID) throw new ShiguangError('上传未完成，请重试', 503);
+  // 管理员上传封面时尚未绑定空间，避免 SDK 将 null 写成字符串。
   await executeSQL(`INSERT INTO shiguang_media(id,space_id,uploaded_by,purpose,mime_type,file_id,byte_length,created_at)
-    VALUES({{id}},{{space}},{{user}},{{purpose}},{{type}},{{file}},{{size}},UTC_TIMESTAMP(3))`,
+    VALUES({{id}},${membership ? '{{space}}' : 'NULL'},{{user}},{{purpose}},{{type}},{{file}},{{size}},UTC_TIMESTAMP(3))`,
   { id, space: membership?.spaceId || null, user: user.id, purpose: admin ? 'admin' : 'member', type, file: result.fileID, size: buffer.length });
   return { reference: `/api/shiguang/media/${id}` };
 }

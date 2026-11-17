@@ -44,8 +44,10 @@ export async function createEntry(space: string, user: string, resource: string,
     if (existing[0].space_id !== space || existing[0].created_by !== user || existing[0].kind !== kind) throw new ShiguangError('请求编号已占用', 409);
     return toEntry(existing[0]);
   }
+  // CloudBase 数据模型 SDK 会把 null 参数转换为字符串，非心情日期须使用 SQL NULL。
+  const moodDateSql = kind === 'mood' ? '{{day}}' : 'NULL';
   const result = await executeSQL(`INSERT INTO shiguang_entries (id,space_id,kind,payload,mood_date,created_by,created_at,updated_at)
-    SELECT {{id}},{{space}},{{kind}},{{payload}},{{day}},{{user}},UTC_TIMESTAMP(3),UTC_TIMESTAMP(3) WHERE ${ACTIVE_SPACE_SQL}`,
+    SELECT {{id}},{{space}},{{kind}},{{payload}},${moodDateSql},{{user}},UTC_TIMESTAMP(3),UTC_TIMESTAMP(3) WHERE ${ACTIVE_SPACE_SQL}`,
   { id, space, kind, payload: JSON.stringify(payload), day: kind === 'mood' ? beijingDate() : null, user });
   if (!result.affectedRows) throw new ShiguangError('空间已停止访问', 403);
   return findEntry(space, id);

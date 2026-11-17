@@ -121,7 +121,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!shellRuntime || entryResolvedRef.current || isAdminRoute) return;
     entryResolvedRef.current = true;
-    if (shellRuntime.homePath === '/shiguang' && pathname !== '/shiguang' && shellRuntime.navItems.some(item => item.href === pathname)) router.replace('/shiguang');
+    // 根路径已由服务端重定向，避免水合期间同时触发两次路由切换。
+    if (shellRuntime.homePath === '/shiguang' && pathname !== '/' && pathname !== '/shiguang' && shellRuntime.navItems.some(item => item.href === pathname)) router.replace('/shiguang');
   }, [shellRuntime, pathname, isAdminRoute, router]);
 
   const previewPageKey = String(searchParams?.get('page_key') || '').trim();

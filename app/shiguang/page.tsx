@@ -9,8 +9,8 @@ import { spaceRequest, uploadSpaceMedia } from '@/lib/shiguang/client';
 import { useSpace } from './components/SpaceContext';
 
 const modules = [
-  ['anniversary', '纪念日', CalendarHeart], ['wish', '许愿池', Sparkles], ['promise', '心约', ScrollText],
-  ['whisper', '絮语', MessageCircleHeart], ['mood', '心情', Smile], ['collection', '拾物采集', Camera], ['tickets', '心意奖券', Ticket],
+  ['anniversary', '纪念日', CalendarHeart, '记住每个特别的日子'], ['wish', '许愿池', Sparkles, '让小愿望慢慢实现'], ['promise', '心约', ScrollText, '写下两个人的约定'],
+  ['whisper', '絮语', MessageCircleHeart, '有些话，只想说给你'], ['mood', '心情', Smile, '分享今天的晴与雨'], ['collection', '拾物采集', Camera, '收藏路上的小美好'], ['tickets', '心意奖券', Ticket, '把偏爱变成小惊喜'],
 ] as const;
 export default function Page() {
   const { summary, refresh } = useSpace();
@@ -25,24 +25,24 @@ export default function Page() {
   const Shell = summary.publishState === 'beta' ? SecondaryPageShell : PrimaryPageShell;
   return <Shell title={space.name} badge="把日子，慢慢写成我们的故事" contentClassName="sg-content sg-stack">
     {error && <p className="sg-error" role="alert">{error}</p>}
-    <section className="sg-card overflow-hidden !p-0">
-      <img src={space.cover} alt={`${space.name}封面`} className="w-full max-h-64 object-cover" />
-      <div className="flex justify-around items-center p-5 gap-4">
+    <section className="sg-card sg-hero">
+      <img src={space.cover} alt={`${space.name}封面`} className="sg-hero-cover" />
+      <div className="sg-members">
         {space.members.map((m, index) => <div key={m.userId} className="contents">
           {index === 1 && <Heart className="text-rose-400 shrink-0" />}
-          <div className="text-center flex flex-col items-center gap-2">
+          <div className="sg-member">
             {m.avatar ? <img src={m.avatar} alt="" className="sg-avatar" /> : <span className="sg-avatar grid place-items-center text-2xl">{m.name.slice(0, 1)}</span>}
             <strong>{m.name}</strong>
-            <Link href="/shiguang/mood" className="text-sm">{summary.moods.find(e => e.createdBy === m.userId)?.payload.mood || '今日未记录'}</Link>
-            {m.userId === userId && <button className="sg-link text-xs" onClick={() => { setName(self.name); setAvatar(self.avatar); setEditing(true); }}>编辑我的空间资料</button>}
+            <Link href="/shiguang/mood" className="sg-mood">{summary.moods.find(e => e.createdBy === m.userId)?.payload.mood || '今日未记录'}</Link>
+            {m.userId === userId && <button className="sg-link" onClick={() => { setName(self.name); setAvatar(self.avatar); setEditing(true); }}>编辑我的资料</button>}
           </div>
         </div>)}
       </div>
     </section>
-    {space.letter && <details className="sg-card"><summary className="cursor-pointer font-semibold">写给我们的信</summary><p className="sg-text mt-4">{space.letter}</p></details>}
+    {space.letter && <details className="sg-card sg-letter"><summary>写给我们的信</summary><p className="sg-text mt-4">{space.letter}</p></details>}
     <div className="sg-grid">
-      <button className="sg-card flex flex-col items-start gap-3 text-left" onClick={() => void openAlbum()}><LockKeyhole size={24} /><strong>专属空间</strong><span className="sg-muted break-all">{space.albumId}</span></button>
-      {modules.map(([key, label, Icon]) => <Link key={key} href={`/shiguang/${key}`} className="sg-card flex flex-col items-start gap-3"><Icon size={24} /><strong>{label}</strong><span className="sg-muted">一起收藏小小的幸福</span></Link>)}
+      <button className="sg-card sg-module" onClick={() => void openAlbum()}><span className="sg-module-icon"><LockKeyhole size={22} /></span><strong>专属空间</strong><span className="sg-muted">重温镜头里的我们</span><span className="sg-muted sg-module-id">{space.albumId}</span></button>
+      {modules.map(([key, label, Icon, description]) => <Link key={key} href={`/shiguang/${key}`} className="sg-card sg-module"><span className="sg-module-icon"><Icon size={22} /></span><strong>{label}</strong><span className="sg-muted">{description}</span></Link>)}
     </div>
     {editing && <div className="sg-modal" role="dialog" aria-modal="true" aria-label="我的空间资料"><section className="sg-card">
       <form className="sg-form" onSubmit={async e => { e.preventDefault(); setBusy(true); try { await spaceRequest('/profile', 'POST', { name, avatar }); await refresh(); setEditing(false); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>

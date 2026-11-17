@@ -1,0 +1,31 @@
+/* 参照专属空间管理：封面卡片、状态胶囊、柔和边框及圆角操作按钮。 */
+.sg-admin { max-width:1200px; }
+.sg-admin-header { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; padding-bottom:8px; }
+.sg-admin-heading { display:flex; align-items:center; gap:14px; }
+.sg-admin-heading>span { width:48px; height:48px; display:grid; place-items:center; background:#FFF0C8; border-radius:16px; }
+.sg-admin-header h1 { font-size:24px; font-weight:700; }
+.sg-admin .sg-button { border:1px solid #ffc85780; border-radius:999px; box-shadow:none; }
+.sg-admin .sg-button:not(:disabled):hover { transform:none; box-shadow:0 3px 10px #5d40371a; }
+.sg-admin .sg-card { border:1px solid #5d40371f; box-shadow:0 4px 16px #5d403708; }
+.sg-admin-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.sg-admin-space { padding:0; overflow:hidden; }
+.sg-admin-cover { position:relative; height:180px; background:#FFF0D4; }
+.sg-admin-cover img { width:100%; height:100%; object-fit:cover; }
+.sg-admin-status { position:absolute; top:14px; right:14px; padding:5px 12px; border-radius:999px; background:#FFFBF0; color:#795548; font-size:12px; box-shadow:0 2px 8px #0000000d; }
+.sg-admin-status.is-enabled { color:#46613C; background:#EAF3DF; }
+.sg-admin-body { padding:20px; }
+.sg-admin-body h2 { font-size:19px; font-weight:700; overflow-wrap:anywhere; }
+.sg-admin-id { margin-top:6px; font-size:11px; }
+.sg-admin-members { margin:18px 0; padding:12px; border-radius:16px; background:#FFFBF0; display:flex; flex-direction:column; gap:14px; }
+.sg-admin-member { display:flex; align-items:center; gap:12px; }
+.sg-admin-member .sg-avatar { width:42px; height:42px; border-width:2px; }
+.sg-admin-avatar { display:grid; place-items:center; }
+.sg-admin-member-name { display:flex; flex-direction:column; flex:1; min-width:0; }
+.sg-admin-member-name strong { font-size:14px; overflow-wrap:anywhere; }
+.sg-admin-member .sg-link { font-size:12px; white-space:nowrap; background:white; padding:6px 10px; }
+.sg-admin-actions { display:flex; gap:12px; margin-top:18px; padding-top:18px; border-top:1px dashed #5d403726; }
+.sg-admin-actions>* { flex:1; gap:6px; }
+.sg-admin-pagination { display:flex; justify-content:center; align-items:center; gap:20px; padding:12px; font-size:13px; }
+.sg-admin .sg-form { max-width:760px; width:100%; align-self:center; }
+.sg-admin-empty { padding:48px 20px; text-align:center; color:#8D6E63; }
+@media(max-width:700px) { .sg-admin-list { grid-template-columns:1fr; gap:20px; } .sg-admin-header h1 { font-size:21px; } }
