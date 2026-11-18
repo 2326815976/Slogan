@@ -1,9 +1,10 @@
 import 'server-only';
 import { normalizeOptionalAuthText } from '@/lib/auth/text';
 import { executeSQL } from '@/lib/cloudbase/sql-executor';
+import { hydrateCloudBaseTempUrlsInRows } from '@/lib/cloudbase/storage-url';
 import { ACTIVE_SPACE_SQL } from './access';
 import { callProcedure, rows, timestamp, type Row } from './db';
-import { toEntry } from './entries';
+import { listAnniversaries, toEntry } from './entries';
 import { beijingDate, integer, mediaReference, object, ShiguangError, text, uuid } from './validation';
 import type { AdminOptions, ShiguangSpace, ShiguangSummary, SpaceMember } from './types';
 import { publication } from './publication';
@@ -19,8 +20,17 @@ export async function getSpace(id: string): Promise<ShiguangSpace> {
 }
 export async function summary(spaceId: string, userId: string, channel: 'web' | 'miniprogram' = 'web'): Promise<ShiguangSummary> {
   const today = beijingDate();
-  const [current, moods, wallets] = await Promise.all([getSpace(spaceId), rows('SELECT * FROM shiguang_entries WHERE space_id={{spaceId}} AND kind=\'mood\' AND mood_date={{today}}', { spaceId, today }), rows('SELECT user_id,balance FROM shiguang_wallets WHERE space_id={{spaceId}}', { spaceId })]);
-  return { userId, today, space: current, moods: moods.map(toEntry), balances: Object.fromEntries(wallets.map(r => [String(r.user_id), Number(r.balance)])), publishState: await publication(channel) === 'beta' ? 'beta' : 'online' };
+  const [current, moods, wallets, anniversaries] = await Promise.all([getSpace(spaceId), rows('SELECT * FROM shiguang_entries WHERE space_id={{spaceId}} AND kind=\'mood\' AND mood_date={{today}}', { spaceId, today }), rows('SELECT user_id,balance FROM shiguang_wallets WHERE space_id={{spaceId}}', { spaceId }), listAnniversaries(spaceId)]);
+  // 只读取绑定空间的展示资料；首页封面预览不触发相册访问统计。
+  const [albums, publishState] = await Promise.all([
+    rows('SELECT id,title,cover_url FROM albums WHERE id={{id}}', { id: current.albumId }),
+    publication(channel),
+  ]);
+  const source = albums[0];
+  const cover = normalizeOptionalAuthText(source?.cover_url) || '';
+  const album = source ? { id: String(source.id), title: String(source.title || '专属空间'), cover, coverUrl: cover } : null;
+  if (album) await hydrateCloudBaseTempUrlsInRows([album], ['coverUrl']);
+  return { userId, today, space: current, album, anniversaries, moods: moods.map(toEntry), balances: Object.fromEntries(wallets.map(r => [String(r.user_id), Number(r.balance)])), publishState: publishState === 'beta' ? 'beta' : 'online' };
 }
 export async function adminSpaces(page: number) {
   // 软删除空间不参与管理列表和分页，成员绑定与历史数据仍保留。

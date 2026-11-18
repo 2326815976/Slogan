@@ -10,6 +10,7 @@ export interface EntryPayload {
   content?: string;
   date?: string;
   direction?: 'up' | 'down';
+  sortOrder?: number;
   status?: 'pending' | 'fulfilled';
   type?: 'text' | 'audio';
   audio?: string;
@@ -40,6 +41,8 @@ export interface Ticket {
 export interface Grant { id: string; giverId: string; receiverId: string; amount: number; createdAt: string }
 export interface ShiguangSummary {
   userId: string; today: string; space: ShiguangSpace; moods: Entry[]; balances: Record<string, number>;
+  album: { id: string; title: string; cover: string; coverUrl: string } | null;
+  anniversaries: Entry[];
   publishState: 'online' | 'beta';
 }
 export interface PageResult<T> { items: T[]; hasMore: boolean }

@@ -5,6 +5,9 @@ import { rows, timestamp, type Row } from './db';
 import { beijingDate, canManageEntry, date, entryKind, entryPayload, integer, object, ShiguangError, text, uuid } from './validation';
 import type { Entry, EntryPayload, Reply } from './types';
 
+// 排序保存在现有 JSON 中；历史记录按 0 处理，同值沿用创建时间和 ID 保持稳定。
+const ANNIVERSARY_ORDER_SQL = "COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.sortOrder')) AS UNSIGNED), 0) ASC,created_at DESC,id DESC";
+
 export function toEntry(row: Row): Entry {
   const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
   return { id: String(row.id), kind: entryKind(String(row.kind)), payload: object(payload) as EntryPayload,
@@ -30,9 +33,14 @@ export async function listEntries(space: string, resource: string, url: URL) {
   const kind = entryKind(resource);
   const page = integer(url.searchParams.get('page') ?? 0, 0, 100000);
   const day = url.searchParams.get('date');
+  const order = kind === 'anniversary' ? ANNIVERSARY_ORDER_SQL : 'created_at DESC,id DESC';
   const result = await rows(`SELECT * FROM shiguang_entries WHERE space_id={{space}} AND kind={{kind}}
-    ${kind === 'mood' && day ? 'AND mood_date={{day}}' : ''} ORDER BY created_at DESC,id DESC LIMIT 31 OFFSET ${page * 30}`, { space, kind, day: day ? date(day) : null });
+    ${kind === 'mood' && day ? 'AND mood_date={{day}}' : ''} ORDER BY ${order} LIMIT 31 OFFSET ${page * 30}`, { space, kind, day: day ? date(day) : null });
   return { items: result.slice(0, 30).map(toEntry), hasMore: result.length > 30 };
+}
+export async function listAnniversaries(space: string): Promise<Entry[]> {
+  const result = await rows(`SELECT * FROM shiguang_entries WHERE space_id={{space}} AND kind='anniversary' ORDER BY ${ANNIVERSARY_ORDER_SQL}`, { space });
+  return result.map(toEntry);
 }
 export async function createEntry(space: string, user: string, resource: string, data: Record<string, unknown>) {
   const kind = entryKind(resource);
@@ -57,7 +65,10 @@ export async function changeEntry(space: string, user: string, resource: string,
   if (current.kind !== entryKind(resource)) throw new ShiguangError('内容类型不匹配', 404);
   if (!canManageEntry(current, user)) throw new ShiguangError(current.kind === 'mood' ? '只能管理自己当天的心情' : '只能管理自己发布的内容', 403);
   const version = integer(data.version, 1, 2147483647);
-  const payload = remove ? current.payload : entryPayload(current.kind, data.payload);
+  const input = remove ? current.payload : object(data.payload);
+  // 旧客户端未传排序时保留原值，编辑名称或日期不会意外改变轮播顺序。
+  const payload = remove ? current.payload : entryPayload(current.kind,
+    current.kind === 'anniversary' ? { sortOrder: current.payload.sortOrder ?? 0, ...input } : input);
   if (!remove) await validateMemberMedia(space, user, payload);
   const params = { id, space, version, payload: JSON.stringify(payload), today: beijingDate(), user };
   const where = `id={{id}} AND space_id={{space}} AND version={{version}} AND ${ACTIVE_SPACE_SQL}

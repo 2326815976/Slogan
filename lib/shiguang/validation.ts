@@ -43,7 +43,7 @@ export function entryPayload(kind: EntryKind, input: unknown): EntryPayload {
   switch (kind) {
     case 'anniversary':
       if (p.direction !== 'up' && p.direction !== 'down') throw new ShiguangError('请选择正数或倒数');
-      return { name: text(p.name, '名称', 100), date: date(p.date), direction: p.direction };
+      return { name: text(p.name, '名称', 100), date: date(p.date), direction: p.direction, sortOrder: integer(p.sortOrder ?? 0, 0, 99999) };
     case 'wish':
       if (p.status !== 'pending' && p.status !== 'fulfilled') throw new ShiguangError('许愿状态错误');
       return { content: text(p.content, '愿望', 5000), status: p.status };
