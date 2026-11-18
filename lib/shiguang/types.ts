@@ -32,10 +32,13 @@ export interface Entry {
 }
 export interface Reply { id: string; entryId: string; content: string; createdBy: string; createdAt: string; version: number }
 export interface Prize {
-  id: string; name: string; content: string; providerId: string; drawerId: string; createdAt: string; version: number;
+  id: string; name: string; content: string; image: string; providerId: string; drawerId: string; createdAt: string; version: number;
+}
+export interface GiftCard {
+  id: string; name: string; content: string; image: string; providerId: string; holderId: string; createdAt: string; version: number;
 }
 export interface Ticket {
-  id: string; name: string; content: string; source: 'draw' | 'gift'; providerId: string; holderId: string;
+  id: string; name: string; content: string; image: string; source: 'draw' | 'gift'; providerId: string; holderId: string;
   status: 'unused' | 'used'; obtainedAt: string; usedAt: string | null; prizeId: string | null;
 }
 export interface Grant { id: string; giverId: string; receiverId: string; amount: number; createdAt: string }

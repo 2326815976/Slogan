@@ -10,7 +10,7 @@ export async function rows(sql: string, params: Record<string, unknown> = {}): P
 }
 // 数据模型 SDK 不支持 CALL；仅事务过程使用官方 RunSql，其余查询沿用 SQL 执行器。
 // 字符串按 UTF-8 十六进制编码，过程名固定，禁止传入任意 SQL。
-export async function callProcedure(name: 'shiguang_create_v2' | 'shiguang_ticket_v1', args: (string | number)[]): Promise<void> {
+export async function callProcedure(name: 'shiguang_create_v2' | 'shiguang_ticket_v1' | 'shiguang_issue_ticket_v2', args: (string | number)[]): Promise<void> {
   const values = args.map(value => typeof value === 'number'
     ? String(value)
     : `CONVERT(X'${Buffer.from(value, 'utf8').toString('hex')}' USING utf8mb4)`);
@@ -32,6 +32,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   SG_REQUEST_CONFLICT: '该请求编号已用于其他操作，请刷新后重试', SG_SPACE_UNAVAILABLE: '拾光空间已禁用或删除', SG_MEMBER_REQUIRED: '仅空间成员可访问',
   SG_INVALID_AMOUNT: '每次可给予 1 至 1000 次机会', SG_BALANCE_LIMIT: '对方剩余次数已达到上限', SG_NO_CHANCES: '抽奖次数不足',
   SG_EMPTY_POOL: '对方尚未设置奖池', SG_INVALID_INPUT: '请检查填写内容', SG_PROVIDER_REQUIRED: '仅提供人可以核销这张奖券',
+  SG_GIFT_UNAVAILABLE: '仅可赠送自己的待赠卡券；卡券有变化时请刷新',
 };
 export function publicError(error: unknown): { message: string; status: number } {
   if (error instanceof ShiguangError) return { message: error.message, status: error.status };
