@@ -3,11 +3,13 @@ import { rows } from './db';
 import { ShiguangError } from './validation';
 
 export function publicAlbumClause(albumId: string) {
-  return `NOT EXISTS (SELECT 1 FROM shiguang_spaces private_space WHERE private_space.album_id=${albumId})`;
+  return `NOT EXISTS (SELECT 1 FROM shiguang_spaces private_space
+    WHERE private_space.album_id=${albumId} AND private_space.album_members_only=1)`;
 }
 
 export function publicPhotoClause(photoId: string, { materializeSource = false } = {}) {
-  const privatePhotoJoin = 'album_photos source_photo JOIN shiguang_spaces private_space ON private_space.album_id=source_photo.album_id';
+  const privatePhotoJoin = `album_photos source_photo JOIN shiguang_spaces private_space
+    ON private_space.album_id=source_photo.album_id AND private_space.album_members_only=1`;
   const source = materializeSource
     ? `(SELECT DISTINCT source_photo.id FROM ${privatePhotoJoin}) source_photo`
     : privatePhotoJoin;
@@ -16,10 +18,10 @@ export function publicPhotoClause(photoId: string, { materializeSource = false }
 }
 
 export async function checkAlbumAccess(albumId: string, userId?: string) {
-  const result = await rows(`SELECT EXISTS (SELECT 1 FROM shiguang_spaces WHERE album_id={{album}}) AS protected_album,
+  const result = await rows(`SELECT NOT (${publicAlbumClause('{{album}}')}) AS protected_album,
     EXISTS (SELECT 1 FROM shiguang_spaces s JOIN shiguang_members m ON m.space_id=s.id
       JOIN shiguang_members partner ON partner.space_id=s.id AND partner.user_id<>m.user_id
-      WHERE s.album_id={{album}} AND s.enabled=1 AND s.deleted_at <=> NULL
+      WHERE s.album_id={{album}} AND s.album_members_only=1 AND s.enabled=1 AND s.deleted_at <=> NULL
         AND m.released_at <=> NULL AND partner.released_at <=> NULL AND m.user_id={{user}}) AS is_member`,
     { album: albumId, user: userId || '' });
   if (!result[0]) throw new ShiguangError('相册权限服务暂不可用', 503);

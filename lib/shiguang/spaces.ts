@@ -1,7 +1,7 @@
 import 'server-only';
 import { normalizeOptionalAuthText } from '@/lib/auth/text';
 import { executeSQL } from '@/lib/cloudbase/sql-executor';
-import { privateAlbumAssetPath, publicAlbumClause } from './album-privacy';
+import { privateAlbumAssetPath } from './album-privacy';
 import { ACTIVE_SPACE_SQL } from './access';
 import { callProcedure, rows, timestamp, type Row } from './db';
 import { listAnniversaries, toEntry } from './entries';
@@ -52,7 +52,8 @@ export async function adminOptions(): Promise<AdminOptions> {
       FROM users u LEFT JOIN profiles p ON p.id=u.id
       WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
     rows(`SELECT id,title FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000'
-      AND ${publicAlbumClause('albums.id')} ORDER BY created_at DESC LIMIT 2000`),
+      AND NOT EXISTS (SELECT 1 FROM shiguang_spaces WHERE album_id=albums.id)
+      ORDER BY created_at DESC LIMIT 2000`),
   ]);
   // 选项显示 ID 后 6 位、手机号和备注，完整 ID 保留用于检索与绑定。
   return {
