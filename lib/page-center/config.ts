@@ -347,7 +347,7 @@ export const BUILT_IN_APP_PAGES: BuiltInAppPageDefinition[] = [
     iconKey: 'album',
     defaultTabText: '采集卡片',
     defaultGuestTabText: '采集卡片',
-    isNavCandidateWeb: true,
+    isNavCandidateWeb: false,
     isTabCandidateMiniProgram: false,
     supportsBeta: true,
     supportsPreview: true,

@@ -17,6 +17,7 @@ export interface EntryPayload {
   mood?: string;
   description?: string;
   image?: string;
+  video?: string;
   location?: string;
   width?: number;
   height?: number;
@@ -30,7 +31,7 @@ export interface Entry {
   id: string; kind: EntryKind; payload: EntryPayload; createdBy: string; createdAt: string;
   updatedAt: string; moodDate: string | null; version: number;
 }
-export interface Reply { id: string; entryId: string; content: string; createdBy: string; createdAt: string; version: number }
+export interface Reply { id: string; entryId: string; content: string; audio?: string; image?: string; video?: string; createdBy: string; createdAt: string; version: number }
 export interface Prize {
   id: string; name: string; content: string; image: string; providerId: string; drawerId: string; createdAt: string; version: number;
 }

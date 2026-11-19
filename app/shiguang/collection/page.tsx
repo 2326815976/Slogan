@@ -1,12 +1,19 @@
 'use client';
 
 import { useMemo } from 'react';
+import { notFound } from 'next/navigation';
 import CaptureLabPage, { type CaptureStorage, type CaptureWallCard } from '@/app/capture-lab/CaptureLabPage';
 import { spaceRequest, uploadSpaceMedia } from '@/lib/shiguang/client';
 import type { Entry, PageResult } from '@/lib/shiguang/types';
 import { useSpace } from '../components/SpaceContext';
 
+const collectionEnabled = false;
+
 export default function Page() {
+  return collectionEnabled ? <CollectionPage /> : notFound();
+}
+
+function CollectionPage() {
   const { summary } = useSpace();
   const memberKey = JSON.stringify(summary.space.members.map(m => [m.userId, m.name]));
   const storage = useMemo<CaptureStorage>(() => {

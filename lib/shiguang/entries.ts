@@ -2,11 +2,14 @@ import 'server-only';
 import { executeSQL } from '@/lib/cloudbase/sql-executor';
 import { ACTIVE_SPACE_SQL } from './access';
 import { rows, timestamp, type Row } from './db';
-import { beijingDate, canManageEntry, date, entryKind, entryPayload, integer, object, ShiguangError, text, uuid } from './validation';
+import { beijingDate, canManageEntry, date, entryKind, entryPayload, integer, messageContent, object, ShiguangError, uuid } from './validation';
 import type { Entry, EntryPayload, Reply } from './types';
 
-// 排序保存在现有 JSON 中；历史记录按 0 处理，同值沿用创建时间和 ID 保持稳定。
-const ANNIVERSARY_ORDER_SQL = "COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.sortOrder')) AS UNSIGNED), 0) ASC,created_at DESC,id DESC";
+const SORT_ORDER_SQL = "CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.sortOrder')) AS UNSIGNED)";
+const CREATED_ORDER_SQL = 'created_at DESC,id DESC';
+const ANNIVERSARY_ORDER_SQL = `COALESCE(${SORT_ORDER_SQL}, 0) ASC,${CREATED_ORDER_SQL}`;
+const WISH_STATUS_ORDER_SQL = "CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(payload, '$.status')) = 'fulfilled' THEN 1 ELSE 0 END";
+const WISH_ORDER_SQL = `${WISH_STATUS_ORDER_SQL} ASC,COALESCE(${SORT_ORDER_SQL}, 100000) ASC,${CREATED_ORDER_SQL}`;
 
 export function toEntry(row: Row): Entry {
   const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
@@ -15,13 +18,16 @@ export function toEntry(row: Row): Entry {
     moodDate: row.mood_date ? (row.mood_date instanceof Date ? row.mood_date.toISOString() : String(row.mood_date)).slice(0, 10) : null, version: Number(row.version) };
 }
 function toReply(row: Row): Reply {
-  return { id: String(row.id), entryId: String(row.entry_id), content: String(row.content), createdBy: String(row.created_by), createdAt: timestamp(row.created_at), version: Number(row.version) };
+  return { id: String(row.id), entryId: String(row.entry_id), content: String(row.content), audio: String(row.audio ?? ''), image: String(row.image ?? ''), video: String(row.video ?? ''),
+    createdBy: String(row.created_by), createdAt: timestamp(row.created_at), version: Number(row.version) };
 }
 export async function validateMemberMedia(space: string, user: string, payload: EntryPayload) {
-  for (const ref of [payload.image, payload.audio].filter(Boolean)) {
-    const mediaId = String(ref).split('/').pop();
+  for (const type of ['image', 'audio', 'video'] as const) {
+    const ref = payload[type];
+    if (!ref) continue;
+    const mediaId = ref.split('/').pop();
     const result = await rows('SELECT id,mime_type FROM shiguang_media WHERE id={{id}} AND space_id={{space}} AND uploaded_by={{user}} AND purpose=\'member\'', { id: mediaId, space, user });
-    if (!result[0] || (ref === payload.audio ? !String(result[0].mime_type).startsWith('audio/') : !String(result[0].mime_type).startsWith('image/'))) throw new ShiguangError('媒体不属于当前成员或类型错误', 403);
+    if (!result[0] || !String(result[0].mime_type).startsWith(`${type}/`)) throw new ShiguangError('媒体不属于当前成员或类型错误', 403);
   }
 }
 export async function findEntry(space: string, id: string) {
@@ -33,7 +39,7 @@ export async function listEntries(space: string, resource: string, url: URL) {
   const kind = entryKind(resource);
   const page = integer(url.searchParams.get('page') ?? 0, 0, 100000);
   const day = url.searchParams.get('date');
-  const order = kind === 'anniversary' ? ANNIVERSARY_ORDER_SQL : 'created_at DESC,id DESC';
+  const order = kind === 'anniversary' ? ANNIVERSARY_ORDER_SQL : kind === 'wish' ? WISH_ORDER_SQL : CREATED_ORDER_SQL;
   const result = await rows(`SELECT * FROM shiguang_entries WHERE space_id={{space}} AND kind={{kind}}
     ${kind === 'mood' && day ? 'AND mood_date={{day}}' : ''} ORDER BY ${order} LIMIT 31 OFFSET ${page * 30}`, { space, kind, day: day ? date(day) : null });
   return { items: result.slice(0, 30).map(toEntry), hasMore: result.length > 30 };
@@ -68,7 +74,7 @@ export async function changeEntry(space: string, user: string, resource: string,
   const input = remove ? current.payload : object(data.payload);
   // 旧客户端未传排序时保留原值，编辑名称或日期不会意外改变轮播顺序。
   const payload = remove ? current.payload : entryPayload(current.kind,
-    current.kind === 'anniversary' ? { sortOrder: current.payload.sortOrder ?? 0, ...input } : input);
+    current.kind === 'anniversary' || current.kind === 'wish' ? { sortOrder: current.payload.sortOrder, ...input } : input);
   if (!remove) await validateMemberMedia(space, user, payload);
   const params = { id, space, version, payload: JSON.stringify(payload), today: beijingDate(), user };
   const where = `id={{id}} AND space_id={{space}} AND version={{version}} AND ${ACTIVE_SPACE_SQL}
@@ -89,23 +95,27 @@ export async function createReply(space: string, user: string, data: Record<stri
   const entryId = uuid(data.entryId);
   const entry = await findEntry(space, entryId);
   if (entry.kind !== 'whisper') throw new ShiguangError('仅絮语支持回复');
-  const id = uuid(data.id), content = text(data.content, '回复', 2000);
+  const id = uuid(data.id), message = messageContent(data, '回复', 2000);
   const existing = await rows('SELECT * FROM shiguang_replies WHERE id={{id}}', { id });
   if (existing[0]) {
     if (existing[0].created_by !== user || existing[0].entry_id !== entryId || existing[0].space_id !== space) throw new ShiguangError('请求编号已占用', 409);
     return toReply(existing[0]);
   }
-  const result = await executeSQL(`INSERT INTO shiguang_replies(id,entry_id,space_id,content,created_by,created_at)
-    SELECT {{id}},{{entryId}},{{space}},{{content}},{{user}},UTC_TIMESTAMP(3) WHERE ${ACTIVE_SPACE_SQL}`, { id, entryId, space, content, user });
+  await validateMemberMedia(space, user, message);
+  const result = await executeSQL(`INSERT INTO shiguang_replies(id,entry_id,space_id,content,audio,image,video,created_by,created_at)
+    SELECT {{id}},{{entryId}},{{space}},{{content}},{{audio}},{{image}},{{video}},{{user}},UTC_TIMESTAMP(3) WHERE ${ACTIVE_SPACE_SQL}`, { id, entryId, space, user, ...message });
   if (!result.affectedRows) throw new ShiguangError('空间已停止访问', 403);
   return { id };
 }
 export async function changeReply(space: string, user: string, id: string, data: Record<string, unknown>, remove = false) {
-  const content = remove ? '' : text(data.content, '回复', 2000);
-  const params = { id: uuid(id), space, user, version: integer(data.version, 1, 2147483647), content };
+  const params = { id: uuid(id), space, user, version: integer(data.version, 1, 2147483647) };
   const where = `id={{id}} AND space_id={{space}} AND created_by={{user}} AND version={{version}} AND ${ACTIVE_SPACE_SQL}`;
-  const result = await executeSQL(remove ? `DELETE FROM shiguang_replies WHERE ${where}`
-    : `UPDATE shiguang_replies SET content={{content}},version=version+1 WHERE ${where}`, params);
+  const message = remove ? null : messageContent(data, '回复', 2000);
+  if (message) await validateMemberMedia(space, user, message);
+  const mediaUpdates = ['audio', 'image', 'video'].filter(field => field in data).map(field => `,${field}={{${field}}}`).join('');
+  const result = message
+    ? await executeSQL(`UPDATE shiguang_replies SET content={{content}}${mediaUpdates},version=version+1 WHERE ${where}`, { ...params, ...message })
+    : await executeSQL(`DELETE FROM shiguang_replies WHERE ${where}`, params);
   if (!result.affectedRows) throw new ShiguangError('仅可管理自己的回复；记录也可能已变化，请刷新', 409);
   return { id };
 }

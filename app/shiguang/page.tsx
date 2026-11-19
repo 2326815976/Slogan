@@ -1,18 +1,16 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
-import { Heart, CalendarHeart, Sparkles, ScrollText, MessageCircleHeart, Camera, Ticket, LockKeyhole } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import PrimaryPageShell from '@/components/shell/PrimaryPageShell';
 import SecondaryPageShell from '@/components/shell/SecondaryPageShell';
 import { spaceRequest, uploadSpaceMedia } from '@/lib/shiguang/client';
 import { useSpace } from './components/SpaceContext';
+import SpaceOverview from './components/SpaceOverview';
 import TodayMood from './components/TodayMood';
+import HomeModules from './components/HomeModules';
+import styles from './components/HomeModules.module.css';
 
-const modules = [
-  ['anniversary', '纪念日', CalendarHeart, '记住每个特别的日子'], ['wish', '许愿池', Sparkles, '让小愿望慢慢实现'], ['promise', '心约', ScrollText, '写下两个人的约定'],
-  ['whisper', '絮语', MessageCircleHeart, '有些话，只想说给你'], ['collection', '拾物采集', Camera, '收藏路上的小美好'], ['tickets', '心意奖券', Ticket, '把偏爱变成小惊喜'],
-] as const;
 export default function Page() {
   const { summary, refresh } = useSpace();
   const { space, userId } = summary;
@@ -24,27 +22,23 @@ export default function Page() {
     catch (e) { setError((e as Error).message); }
   }
   const Shell = summary.publishState === 'beta' ? SecondaryPageShell : PrimaryPageShell;
-  return <Shell title={space.name} badge="把日子，慢慢写成我们的故事" contentClassName="sg-content sg-stack">
+  return <Shell title={space.name} badge="💕 记录我们的专属时光 💕" contentClassName={`sg-content sg-stack ${styles.home}`}>
     {error && <p className="sg-error" role="alert">{error}</p>}
-    <section className="sg-card sg-hero">
-      <img src={space.cover} alt={`${space.name}封面`} className="sg-hero-cover" />
-      <div className="sg-members">
-        {space.members.map((m, index) => <div key={m.userId} className="contents">
-          {index === 1 && <Heart className="text-rose-400 shrink-0" />}
-          <div className="sg-member">
-            {m.avatar ? <img src={m.avatar} alt="" className="sg-avatar" /> : <span className="sg-avatar grid place-items-center text-2xl">{m.name.slice(0, 1)}</span>}
-            <strong>{m.name}</strong>
-            {m.userId === userId ? <TodayMood /> : <span className="sg-mood">{summary.moods.find(entry => entry.createdBy === m.userId)?.payload.mood || '记录心情'}</span>}
-            {m.userId === userId && <button className="sg-link" onClick={() => { setName(self.name); setAvatar(self.avatar); setEditing(true); }}>编辑我的资料</button>}
-          </div>
-        </div>)}
-      </div>
+    <section className={styles.members} aria-label="空间成员">
+      {space.members.map(member => <div key={member.userId} className={`${styles.member} ${member.role === 'boy' ? styles.boy : styles.girl}`}>
+        <div className={styles.portrait}>
+          {member.avatar ? <img src={member.avatar} alt="" /> : <span>{member.name.slice(0, 1)}</span>}
+          {member.userId === userId && <button type="button" aria-label="编辑我的空间资料" onClick={() => { setName(self.name); setAvatar(self.avatar); setEditing(true); }}><Pencil /></button>}
+        </div>
+        <div className={styles.memberInfo}>
+          <strong>{member.name}</strong>
+          {member.userId === userId ? <TodayMood /> : <span className="sg-mood">{summary.moods.find(entry => entry.createdBy === member.userId)?.payload.mood || '今日未记录'}</span>}
+        </div>
+      </div>)}
     </section>
+    <SpaceOverview key={`${space.id}:${space.albumId}`} onOpenAlbum={openAlbum} />
     {space.letter && <details className="sg-card sg-letter"><summary>写给我们的信</summary><p className="sg-text mt-4">{space.letter}</p></details>}
-    <div className="sg-grid">
-      <button className="sg-card sg-module" onClick={() => void openAlbum()}><span className="sg-module-icon"><LockKeyhole size={22} /></span><strong>专属空间</strong><span className="sg-muted">重温镜头里的我们</span><span className="sg-muted sg-module-id">{space.albumId}</span></button>
-      {modules.map(([key, label, Icon, description]) => <Link key={key} href={`/shiguang/${key}`} className="sg-card sg-module"><span className="sg-module-icon"><Icon size={22} /></span><strong>{label}</strong><span className="sg-muted">{description}</span></Link>)}
-    </div>
+    <HomeModules key={`${space.id}:${userId}`} userId={userId} balance={summary.balances[userId] || 0} members={space.members} />
     {editing && <div className="sg-modal" role="dialog" aria-modal="true" aria-label="我的空间资料"><section className="sg-card">
       <form className="sg-form" onSubmit={async e => { e.preventDefault(); setBusy(true); try { await spaceRequest('/profile', 'POST', { name, avatar }); await refresh(); setEditing(false); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>
         <h2>我的空间资料</h2><p className="sg-muted">仅用于拾光空间</p>

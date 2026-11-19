@@ -38,6 +38,14 @@ export function mediaReference(value: unknown, required = false): string {
   if (result && !/^\/api\/shiguang\/media\/[0-9a-f-]{36}$/.test(result)) throw new ShiguangError('请先上传空间图片或录音');
   return result;
 }
+export function messageContent(input: Record<string, unknown>, label: string, max: number) {
+  const content = text(input.content, label, max, false);
+  const audio = mediaReference(input.audio);
+  const image = mediaReference(input.image);
+  const video = mediaReference(input.video);
+  if (!content && !audio && !image && !video) throw new ShiguangError('请输入文字或添加附件');
+  return { content, audio, image, video };
+}
 export function entryPayload(kind: EntryKind, input: unknown): EntryPayload {
   const p = object(input);
   switch (kind) {
@@ -46,11 +54,13 @@ export function entryPayload(kind: EntryKind, input: unknown): EntryPayload {
       return { name: text(p.name, '名称', 100), date: date(p.date), direction: p.direction, sortOrder: integer(p.sortOrder ?? 0, 0, 99999) };
     case 'wish':
       if (p.status !== 'pending' && p.status !== 'fulfilled') throw new ShiguangError('许愿状态错误');
-      return { content: text(p.content, '愿望', 5000), status: p.status };
+      return { content: text(p.content, '愿望', 5000), status: p.status,
+        sortOrder: p.sortOrder == null || p.sortOrder === '' ? undefined : integer(p.sortOrder, 0, 99999) };
     case 'promise': return { title: text(p.title, '标题', 100), content: text(p.content, '内容', 10000) };
-    case 'whisper':
-      if (p.type !== 'text' && p.type !== 'audio') throw new ShiguangError('请选择文字或音频');
-      return { title: text(p.title, '标题', 100), type: p.type, content: text(p.content, '内容', 10000, p.type === 'text'), audio: p.type === 'audio' ? mediaReference(p.audio, true) : '' };
+    case 'whisper': {
+      const message = messageContent(p.type === 'text' && !('image' in p) ? { ...p, audio: '' } : p, '正文', 10000);
+      return { title: text(p.title, '标题', 100, false), type: message.audio ? 'audio' : 'text', ...message };
+    }
     case 'mood': return { mood: text(p.mood, '心情', 30), description: text(p.description, '描述', 1000, false) };
     case 'collection': return { name: text(p.name, '名称', 100), image: mediaReference(p.image, true), location: text(p.location, '地点', 200, false), content: text(p.content, '内容', 10000, false), width: integer(p.width ?? 1, 1, 20000), height: integer(p.height ?? 1, 1, 20000) };
   }

@@ -2,15 +2,17 @@ import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { publicError } from '@/lib/shiguang/db';
 import { requireUser } from '@/lib/shiguang/access';
-import { downloadMedia, mediaRecord } from '@/lib/shiguang/media';
+import { downloadImagePreview, downloadMedia, mediaRecord } from '@/lib/shiguang/media';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser(request);
     const { id } = await context.params, record = await mediaRecord(id, user);
-    const content = await downloadMedia(record);
-    const headers = { 'Content-Type': String(record.mime_type), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
-    if (new URL(request.url).searchParams.get('view') === 'avatar') {
+    const query = new URL(request.url).searchParams;
+    const isPreview = query.get('variant') === 'preview';
+    const content = await (isPreview ? downloadImagePreview(record) : downloadMedia(record));
+    const headers = { 'Content-Type': isPreview ? 'image/webp' : String(record.mime_type), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
+    if (query.get('view') === 'avatar') {
       if (!headers['Content-Type'].startsWith('image/')) {
         return NextResponse.json({ error: '头像必须是图片' }, { status: 415, headers: { 'Cache-Control': 'private, no-store' } });
       }

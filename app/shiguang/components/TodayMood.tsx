@@ -5,7 +5,11 @@ import { useRef, useState } from 'react';
 import { spaceRequest, SpaceRequestError } from '@/lib/shiguang/client';
 import { useSpace } from './SpaceContext';
 
-const quickMoods = ['开心', '平静', '难过'];
+const quickMoods = [
+  { name: '开心', icon: '😄', tone: 'happy' },
+  { name: '平静', icon: '😌', tone: 'calm' },
+  { name: '难过', icon: '😢', tone: 'sad' },
+];
 
 export default function TodayMood() {
   const { summary, refresh } = useSpace();
@@ -28,7 +32,7 @@ export default function TodayMood() {
   async function save(mood: string, detail: string) {
     if (saving) return;
     const value = mood.trim();
-    if (!value) { setError('请输入心情名称'); return; }
+    if (!value) { setError('请输入心情'); return; }
     const payload = { mood: value, description: detail.trim() };
     setSaving(true);
     setError('');
@@ -45,6 +49,8 @@ export default function TodayMood() {
     }
   }
 
+  const historyLabel = <>心情记录<span className="sg-mood-arrow" aria-hidden="true" /></>;
+
   return <>
     <button type="button" className="sg-mood sg-mood-trigger" aria-haspopup="dialog" onClick={open}>
       {entry?.payload.mood || '记录心情'}
@@ -52,26 +58,30 @@ export default function TodayMood() {
     <dialog ref={dialog} className="sg-card sg-mood-dialog" aria-labelledby="sg-mood-title" onCancel={event => { if (saving) event.preventDefault(); }}>
       <div className="sg-mood-dialog-heading">
         <h2 id="sg-mood-title">今天的心情</h2>
-        <button type="button" className="sg-link" disabled={saving} onClick={() => dialog.current?.close()}>关闭</button>
+        <button type="button" className="sg-mood-close" aria-label="关闭" disabled={saving} onClick={() => dialog.current?.close()}>×</button>
       </div>
       <div className="sg-mood-options">
-        {quickMoods.map(mood => <button key={mood} type="button" className="sg-link" disabled={saving}
-          aria-pressed={entry?.payload.mood === mood} onClick={() => void save(mood, entry?.payload.description ?? '')}>{mood}</button>)}
+        {quickMoods.map(mood => <button key={mood.name} type="button" className={`sg-mood-option sg-mood-option--${mood.tone}`} disabled={saving}
+          aria-pressed={entry?.payload.mood === mood.name} onClick={() => void save(mood.name, entry?.payload.description ?? '')}>
+          <span className="sg-mood-option-icon" aria-hidden="true">{mood.icon}</span>
+          {mood.name}
+        </button>)}
+      </div>
+      <div className="sg-mood-dialog-footer">
+        <button type="button" className="sg-mood-secondary" aria-expanded={expanded} disabled={saving} onClick={() => setExpanded(!expanded)}>
+          {expanded ? '收起自定义' : '自定义心情'}
+          <span className="sg-mood-arrow" aria-hidden="true" />
+        </button>
+        {saving ? <button type="button" className="sg-mood-secondary" disabled>{historyLabel}</button> :
+          <Link href="/shiguang/mood" className="sg-mood-secondary" onClick={() => dialog.current?.close()}>{historyLabel}</Link>}
       </div>
       {expanded && <form className="sg-form sg-mood-form" onSubmit={event => { event.preventDefault(); void save(name, description); }}>
-        <label>心情名称<input required maxLength={30} value={name} disabled={saving} onChange={event => setName(event.target.value)} /></label>
-        <label>描述（可选）<textarea maxLength={1000} value={description} disabled={saving} onChange={event => setDescription(event.target.value)} /></label>
-        <button className="sg-button" disabled={saving}>保存</button>
+        <label>心情<input required maxLength={30} value={name} disabled={saving} onChange={event => setName(event.target.value)} /></label>
+        <label>感受（选填）<textarea maxLength={1000} value={description} disabled={saving} onChange={event => setDescription(event.target.value)} /></label>
+        <button className="sg-button" disabled={saving}>保存心情</button>
       </form>}
       {saving && <p className="sg-muted" role="status">正在保存…</p>}
       {error && <p className="sg-error" role="alert">{error}</p>}
-      <div className="sg-mood-dialog-footer">
-        <button type="button" className="sg-link" aria-expanded={expanded} disabled={saving} onClick={() => setExpanded(!expanded)}>
-          {expanded ? '收起自定义' : '展开自定义'}
-        </button>
-        {saving ? <button type="button" className="sg-link" disabled>更多</button> :
-          <Link href="/shiguang/mood" className="sg-link" aria-label="更多心情记录" onClick={() => dialog.current?.close()}>更多</Link>}
-      </div>
     </dialog>
   </>;
 }
