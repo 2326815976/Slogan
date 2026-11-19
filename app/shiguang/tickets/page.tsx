@@ -8,6 +8,9 @@ import { useSpace } from '../components/SpaceContext';
 
 type OfferingResource = 'prizes' | 'gift-cards';
 type Offering = Prize | GiftCard;
+const sections = [{ id: 'wheel', label: '转盘抽奖' }, { id: 'cards', label: '我的卡券' }] as const;
+type Section = typeof sections[number]['id'];
+const cardsHash = '#sg-my-tickets';
 
 function CardImage({ image, name }: { image: string; name: string }) {
   return image ? <img className="my-2 max-h-56 max-w-full rounded-lg object-contain" src={image} alt={name} loading="lazy" /> : null;
@@ -15,6 +18,7 @@ function CardImage({ image, name }: { image: string; name: string }) {
 
 export default function Page() {
   const { summary, refresh } = useSpace();
+  const [section, setSection] = useState<Section>('wheel');
   const [prizes, setPrizes] = useState<Prize[]>([]), [tickets, setTickets] = useState<Ticket[]>([]), [grants, setGrants] = useState<Grant[]>([]);
   const [cards, setCards] = useState<GiftCard[]>([]);
   const [ticketPage, setTicketPage] = useState(0), [grantPage, setGrantPage] = useState(0), [ticketMore, setTicketMore] = useState(false), [grantMore, setGrantMore] = useState(false);
@@ -26,6 +30,7 @@ export default function Page() {
   const userName = (id: string) => summary.space.members.find(m => m.userId === id)?.name || '成员';
   const partner = summary.space.members.find(m => m.userId !== summary.userId)!;
   const pool = prizes.filter(p => p.providerId !== summary.userId);
+  const pendingCards = cards.filter(card => card.providerId === summary.userId);
   const loadHistory = useCallback(async (resource: 'tickets' | 'grants', page = 0) => {
     if (resource === 'tickets') { const data = await spaceRequest<PageResult<Ticket>>(`/tickets?page=${page}`); setTickets(p => page ? [...p, ...data.items] : data.items); setTicketMore(data.hasMore); setTicketPage(page); }
     else { const data = await spaceRequest<PageResult<Grant>>(`/grants?page=${page}`); setGrants(p => page ? [...p, ...data.items] : data.items); setGrantMore(data.hasMore); setGrantPage(page); }
@@ -40,6 +45,20 @@ export default function Page() {
   }, [loadHistory]);
   useEffect(() => { void load().catch(e => setError(e.message)); }, [load]);
   useEffect(() => { const timer = setInterval(() => { if (document.visibilityState === 'visible' && !locked.current) void load().catch(e => setError(e.message)); }, 5000); return () => clearInterval(timer); }, [load]);
+  useEffect(() => {
+    const syncSection = () => setSection(window.location.hash === cardsHash ? 'cards' : 'wheel');
+    syncSection();
+    window.addEventListener('hashchange', syncSection);
+    return () => window.removeEventListener('hashchange', syncSection);
+  }, []);
+  function selectSection(next: Section) {
+    if (next === section || busy) return;
+    setSection(next);
+    setMessage('');
+    const url = new URL(window.location.href);
+    url.hash = next === 'cards' ? cardsHash : '';
+    window.history.replaceState(window.history.state, '', url);
+  }
   async function action(operation: string, data: Record<string, unknown> = {}) {
     if (locked.current) return;
     locked.current = true; setBusy(true); setError(''); setMessage('');
@@ -57,7 +76,7 @@ export default function Page() {
           setAngle(previous => Math.ceil(previous / 360) * 360 + 1800 - (index + .5) * 360 / pool.length);
           spin = new Promise(resolve => setTimeout(resolve, 2500));
         }
-        setMessage(`抽中了「${result.name}」，已经放入你的奖券。`);
+        setMessage(`抽中了「${result.name}」，已放入「我的卡券」。`);
       } else { setMessage(operation === 'grant' ? '抽奖次数已送达' : operation === 'send-card' ? '心意已送达' : '已记录兑现时间'); }
       if (operation === 'send-card' && editing?.id === data.cardId) setMode('');
       await Promise.all([load(), refresh()]);
@@ -115,8 +134,7 @@ export default function Page() {
     {image && <div><CardImage image={image} name={`${label}图片预览`} /><button type="button" className="sg-link" disabled={busy} onClick={() => setImage('')}>移除图片</button></div>}
     <div className="sg-actions"><button disabled={busy} className="sg-button">保存</button><button disabled={busy} type="button" className="sg-link" onClick={() => setMode('')}>取消</button></div>
   </form>;
-  return <SecondaryPageShell title="心意奖券" fallbackHref="/shiguang" contentClassName="sg-content sg-stack">
-    {error && <p className="sg-error" role="alert">{error}</p>}{message && <p className="sg-card" role="status">{message}</p>}
+  const wheelSection = <>
     <section className="sg-card text-center"><h2 className="font-semibold text-lg">{partner.name} 的心意转盘</h2><p className="sg-muted">剩余 {summary.balances[summary.userId] || 0} 次 · 每项机会相同，每次必中奖</p>
       <div className="sg-wheel-pointer">▼</div><div className="sg-wheel" style={{ transform: `rotate(${angle}deg)`, background: pool.length ? `conic-gradient(${pool.map((_, i) => `${['#FFE2AE', '#F6C6C6', '#DCE7D1', '#FBEFCB'][i % 4]} ${i * 100 / pool.length}% ${(i + 1) * 100 / pool.length}%`).join(',')})` : '#FBEFCB' }} aria-label={`${pool.length} 个等概率奖项`}>{pool.map((p, i) => <span key={p.id} className="sg-wheel-label" style={{ transform: `rotate(${(i + .5) * 360 / pool.length - 90}deg) translateX(24px)` }}>{p.name}</span>)}</div>
       <button className="sg-button" disabled={busy || (!retryDraw && (!pool.length || !(summary.balances[summary.userId] > 0)))} onClick={() => void action('draw')}>{busy ? '处理中…' : retryDraw ? '确认上次抽奖' : '转动心意'}</button>
@@ -124,6 +142,12 @@ export default function Page() {
       <div className="mt-4 text-left sg-stack">{pool.map(prize => <div key={prize.id}><strong>{prize.name}</strong><CardImage image={prize.image} name={prize.name} />{prize.content && <p className="sg-text text-sm">{prize.content}</p>}<p className="sg-muted">{userName(prize.providerId)} 提供 · 抽奖人 {userName(prize.drawerId)} · {displayTime(prize.createdAt)}</p></div>)}</div>
     </section>
     <section className="sg-card sg-stack"><h2 className="font-semibold">给 {partner.name} 抽奖次数</h2><p className="sg-muted">对方可用 {summary.balances[partner.userId] || 0} 次</p><form className="sg-actions" onSubmit={e => { e.preventDefault(); void action('grant', { amount }); }}><label>给予次数 <input className="border rounded-lg p-2 w-20" type="number" required min={1} max={1000} step={1} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><button className="sg-button" disabled={busy}>赠送次数</button></form></section>
+    <details className="sg-card">
+      <summary>次数赠送记录</summary>
+      {!grants.length && <p className="sg-muted my-3">还没有赠送记录</p>}
+      {grants.map(grant => <p className="sg-muted my-3" key={grant.id}>{userName(grant.giverId)} 给予 {userName(grant.receiverId)} {grant.amount} 次 · {displayTime(grant.createdAt)}</p>)}
+      {grantMore && <button className="sg-link" onClick={() => void loadHistory('grants', grantPage + 1).catch(e => setError(e.message))}>更多记录</button>}
+    </details>
     <section className="sg-card sg-stack">
       <div className="sg-actions justify-between"><h2 className="font-semibold">我提供的奖池</h2><button className="sg-link" disabled={busy} onClick={() => openForm('prizes')}>新增奖项</button></div>
       <p className="sg-muted">供 {partner.name} 抽取，修改不会影响已获得的奖券。</p>
@@ -135,31 +159,48 @@ export default function Page() {
         <button className="sg-link sg-danger" disabled={busy} onClick={() => void remove('prizes', prize)}>删除</button>
       </div>)}
     </section>
+  </>;
+  const cardsSection = <>
     <section className="sg-card sg-stack">
       <div className="sg-actions justify-between"><h2 className="font-semibold">待赠卡券</h2><button className="sg-link" disabled={busy} onClick={() => openForm('gift-cards')}>创建卡券</button></div>
       {mode === 'gift-cards' && editor}
-      {!cards.length && <p className="sg-muted">还没有待赠卡券</p>}
-      {cards.map(card => <article key={card.id} className="border-t pt-3">
+      {!pendingCards.length && <p className="sg-muted">还没有待赠卡券</p>}
+      {pendingCards.map(card => <article key={card.id} className="border-t pt-3">
         <strong>{card.name}</strong><CardImage image={card.image} name={card.name} /><p className="sg-text">{card.content}</p>
         <p className="sg-muted">{userName(card.providerId)} 提供 · 拟赠给 {userName(card.holderId)} · {displayTime(card.createdAt)}</p>
-        {card.providerId === summary.userId && <div className="sg-actions">
+        <div className="sg-actions">
           <button className="sg-button" disabled={busy} onClick={() => { if (confirm(`确认把「${card.name}」送给 ${partner.name}？送出后不可编辑或删除。`)) void action('send-card', { cardId: card.id, version: card.version }); }}>赠送给对方</button>
           <button className="sg-link" disabled={busy} onClick={() => openForm('gift-cards', card)}>编辑</button>
           <button className="sg-link sg-danger" disabled={busy} onClick={() => void remove('gift-cards', card)}>删除</button>
-        </div>}
+        </div>
       </article>)}
     </section>
     <section className="sg-card sg-stack">
-      <h2 className="font-semibold">我们的奖券</h2>
-      {!tickets.length && <p className="sg-muted">还没有收到心意券</p>}
-      {tickets.map(ticket => <article key={ticket.id} className="border-t pt-3">
-        <div className="sg-actions justify-between"><strong>{ticket.name}</strong><span>{ticket.status === 'used' ? '已使用' : '待使用'}</span></div>
-        <CardImage image={ticket.image} name={ticket.name} />{ticket.content && <p className="sg-text">{ticket.content}</p>}
-        <p className="sg-muted">{ticket.source === 'draw' ? '抽奖获得' : '直接赠送'} · {userName(ticket.providerId)} 提供给 {userName(ticket.holderId)}<br />获得：{displayTime(ticket.obtainedAt)}{ticket.usedAt && <><br />使用：{displayTime(ticket.usedAt)}</>}</p>
-        {ticket.providerId === summary.userId && ticket.status === 'unused' && <button className="sg-link" disabled={busy} onClick={() => { if (confirm('确认已经为对方兑现这张券？')) void action('redeem', { ticketId: ticket.id }); }}>已兑现，标记使用</button>}
-      </article>)}
+      <h2 className="font-semibold">送出与获得</h2>
+      {!tickets.length && <p className="sg-muted">还没有卡券记录</p>}
+      {tickets.map(ticket => {
+        const sentGift = ticket.source === 'gift' && ticket.providerId === summary.userId;
+        const sourceLabel = ticket.source === 'draw'
+          ? `抽奖获得 · ${userName(ticket.providerId)} 提供给 ${userName(ticket.holderId)}`
+          : sentGift ? `已赠给 ${userName(ticket.holderId)}` : `收到 ${userName(ticket.providerId)} 的赠送`;
+        return <article key={ticket.id} className="border-t pt-3">
+          <div className="sg-actions justify-between"><strong>{ticket.name}</strong><span>{ticket.status === 'used' ? '已使用' : '待使用'}</span></div>
+          <CardImage image={ticket.image} name={ticket.name} />{ticket.content && <p className="sg-text">{ticket.content}</p>}
+          <p className="sg-muted">{sourceLabel}<br />{sentGift ? '送出' : '获得'}：{displayTime(ticket.obtainedAt)}{ticket.usedAt && <><br />使用：{displayTime(ticket.usedAt)}</>}</p>
+          {ticket.providerId === summary.userId && ticket.status === 'unused' && <button className="sg-link" disabled={busy} onClick={() => { if (confirm('确认已经为对方兑现这张券？')) void action('redeem', { ticketId: ticket.id }); }}>已兑现，标记使用</button>}
+        </article>;
+      })}
       {ticketMore && <button className="sg-link" onClick={() => void loadHistory('tickets', ticketPage + 1).catch(e => setError(e.message))}>更多奖券</button>}
     </section>
-    <details className="sg-card"><summary>次数赠送记录</summary>{grants.map(g => <p className="sg-muted my-3" key={g.id}>{userName(g.giverId)} 给予 {userName(g.receiverId)} {g.amount} 次 · {displayTime(g.createdAt)}</p>)}{grantMore && <button className="sg-link" onClick={() => void loadHistory('grants', grantPage + 1).catch(e => setError(e.message))}>更多记录</button>}</details>
+  </>;
+  return <SecondaryPageShell title="心意奖券" fallbackHref="/shiguang" contentClassName="sg-content sg-stack">
+    <div id="sg-my-tickets" className="grid grid-cols-2 gap-1 rounded-2xl border border-[#ecdfcc] bg-[#faf1e1] p-1" role="group" aria-label="心意奖券分类">
+      {sections.map(({ id, label }) => <button key={id} type="button" aria-pressed={id === section} disabled={busy} onClick={() => selectSection(id)}
+        className={`min-h-10 rounded-xl px-2 text-sm disabled:opacity-70 ${id === section ? 'bg-[#ffeccb] font-bold text-[#5d4037] ring-1 ring-inset ring-[#eed0a5]' : 'text-[#795c4a]'}`}>
+        {label}
+      </button>)}
+    </div>
+    {error && <p className="sg-error" role="alert">{error}</p>}{message && <p className="sg-card" role="status">{message}</p>}
+    {section === 'wheel' ? wheelSection : cardsSection}
   </SecondaryPageShell>;
 }
