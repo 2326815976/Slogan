@@ -1,12 +1,26 @@
 import { NextResponse } from 'next/server';
+import sharp from 'sharp';
 import { publicError } from '@/lib/shiguang/db';
-import { downloadMedia, mediaRecord, mediaUser } from '@/lib/shiguang/media';
+import { requireUser } from '@/lib/shiguang/access';
+import { downloadMedia, mediaRecord } from '@/lib/shiguang/media';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await context.params, user = await mediaUser(request, id), record = await mediaRecord(id, user);
+    const user = await requireUser(request);
+    const { id } = await context.params, record = await mediaRecord(id, user);
     const content = await downloadMedia(record);
     const headers = { 'Content-Type': String(record.mime_type), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
+    if (new URL(request.url).searchParams.get('view') === 'avatar') {
+      if (!headers['Content-Type'].startsWith('image/')) {
+        return NextResponse.json({ error: '头像必须是图片' }, { status: 415, headers: { 'Cache-Control': 'private, no-store' } });
+      }
+      const preview = await sharp(content, { limitInputPixels: 40000000 })
+        .rotate()
+        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
+        .png()
+        .toBuffer();
+      return NextResponse.json({ data: { image: preview.toString('base64') } }, { headers: { 'Cache-Control': 'private, no-store' } });
+    }
     const range = request.headers.get('range');
     if (range) {
       const match = /^bytes=(\d+)-(\d*)$/.exec(range);
@@ -16,5 +30,5 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       return new NextResponse(new Uint8Array(content.subarray(start, end + 1)), { status: 206, headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${content.length}`, 'Content-Length': String(end - start + 1) } });
     }
     return new NextResponse(new Uint8Array(content), { headers: { ...headers, 'Content-Length': String(content.length) } });
-  } catch (error) { const result = publicError(error); return NextResponse.json({ error: result.message }, { status: result.status }); }
+  } catch (error) { const result = publicError(error); return NextResponse.json({ error: result.message }, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } }); }
 }

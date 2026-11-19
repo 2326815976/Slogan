@@ -106,7 +106,7 @@ export default function Page() {
   const editor = mode && <form className="sg-form border-t pt-4" onSubmit={event => { event.preventDefault(); void save(); }}>
     <h3 className="font-semibold">{editing ? '编辑' : '新增'}{label}</h3>
     <label>名称<input required maxLength={100} value={name} disabled={busy} onChange={event => setName(event.target.value)} /></label>
-    <label>内容<textarea required maxLength={5000} value={content} disabled={busy} onChange={event => setContent(event.target.value)} /></label>
+    <label>{mode === 'prizes' ? '内容（选填）' : '内容'}<textarea required={mode === 'gift-cards'} maxLength={5000} value={content} disabled={busy} onChange={event => setContent(event.target.value)} /></label>
     <label>图片（可选）<input key={`${mode}-${recordId.current}`} type="file" accept="image/jpeg,image/png,image/gif,image/webp" disabled={busy} onChange={event => {
       const file = event.target.files?.[0];
       event.target.value = '';
@@ -121,7 +121,7 @@ export default function Page() {
       <div className="sg-wheel-pointer">▼</div><div className="sg-wheel" style={{ transform: `rotate(${angle}deg)`, background: pool.length ? `conic-gradient(${pool.map((_, i) => `${['#FFE2AE', '#F6C6C6', '#DCE7D1', '#FBEFCB'][i % 4]} ${i * 100 / pool.length}% ${(i + 1) * 100 / pool.length}%`).join(',')})` : '#FBEFCB' }} aria-label={`${pool.length} 个等概率奖项`}>{pool.map((p, i) => <span key={p.id} className="sg-wheel-label" style={{ transform: `rotate(${(i + .5) * 360 / pool.length - 90}deg) translateX(24px)` }}>{p.name}</span>)}</div>
       <button className="sg-button" disabled={busy || (!retryDraw && (!pool.length || !(summary.balances[summary.userId] > 0)))} onClick={() => void action('draw')}>{busy ? '处理中…' : retryDraw ? '确认上次抽奖' : '转动心意'}</button>
       {!pool.length && <p className="sg-muted mt-3">对方还没有准备奖项</p>}
-      <div className="mt-4 text-left sg-stack">{pool.map(prize => <div key={prize.id}><strong>{prize.name}</strong><CardImage image={prize.image} name={prize.name} /><p className="sg-text text-sm">{prize.content}</p><p className="sg-muted">{userName(prize.providerId)} 提供 · 抽奖人 {userName(prize.drawerId)} · {displayTime(prize.createdAt)}</p></div>)}</div>
+      <div className="mt-4 text-left sg-stack">{pool.map(prize => <div key={prize.id}><strong>{prize.name}</strong><CardImage image={prize.image} name={prize.name} />{prize.content && <p className="sg-text text-sm">{prize.content}</p>}<p className="sg-muted">{userName(prize.providerId)} 提供 · 抽奖人 {userName(prize.drawerId)} · {displayTime(prize.createdAt)}</p></div>)}</div>
     </section>
     <section className="sg-card sg-stack"><h2 className="font-semibold">给 {partner.name} 抽奖次数</h2><p className="sg-muted">对方可用 {summary.balances[partner.userId] || 0} 次</p><form className="sg-actions" onSubmit={e => { e.preventDefault(); void action('grant', { amount }); }}><label>给予次数 <input className="border rounded-lg p-2 w-20" type="number" required min={1} max={1000} step={1} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><button className="sg-button" disabled={busy}>赠送次数</button></form></section>
     <section className="sg-card sg-stack">
@@ -129,7 +129,7 @@ export default function Page() {
       <p className="sg-muted">供 {partner.name} 抽取，修改不会影响已获得的奖券。</p>
       {mode === 'prizes' && editor}
       {prizes.filter(prize => prize.providerId === summary.userId).map(prize => <div key={prize.id} className="border-t pt-3">
-        <strong>{prize.name}</strong><CardImage image={prize.image} name={prize.name} /><p className="sg-text">{prize.content}</p>
+        <strong>{prize.name}</strong><CardImage image={prize.image} name={prize.name} />{prize.content && <p className="sg-text">{prize.content}</p>}
         <p className="sg-muted">{userName(prize.providerId)} 提供 · 抽奖人 {userName(prize.drawerId)} · {displayTime(prize.createdAt)}</p>
         <button className="sg-link" disabled={busy} onClick={() => openForm('prizes', prize)}>编辑</button>
         <button className="sg-link sg-danger" disabled={busy} onClick={() => void remove('prizes', prize)}>删除</button>
@@ -154,7 +154,7 @@ export default function Page() {
       {!tickets.length && <p className="sg-muted">还没有收到心意券</p>}
       {tickets.map(ticket => <article key={ticket.id} className="border-t pt-3">
         <div className="sg-actions justify-between"><strong>{ticket.name}</strong><span>{ticket.status === 'used' ? '已使用' : '待使用'}</span></div>
-        <CardImage image={ticket.image} name={ticket.name} /><p className="sg-text">{ticket.content}</p>
+        <CardImage image={ticket.image} name={ticket.name} />{ticket.content && <p className="sg-text">{ticket.content}</p>}
         <p className="sg-muted">{ticket.source === 'draw' ? '抽奖获得' : '直接赠送'} · {userName(ticket.providerId)} 提供给 {userName(ticket.holderId)}<br />获得：{displayTime(ticket.obtainedAt)}{ticket.usedAt && <><br />使用：{displayTime(ticket.usedAt)}</>}</p>
         {ticket.providerId === summary.userId && ticket.status === 'unused' && <button className="sg-link" disabled={busy} onClick={() => { if (confirm('确认已经为对方兑现这张券？')) void action('redeem', { ticketId: ticket.id }); }}>已兑现，标记使用</button>}
       </article>)}

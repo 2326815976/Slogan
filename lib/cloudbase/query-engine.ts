@@ -3,6 +3,7 @@ import 'server-only';
 import { randomUUID } from 'crypto';
 import { AuthContext } from '@/lib/auth/types';
 import { hydrateCloudBaseTempUrlsInRows } from '@/lib/cloudbase/storage-url';
+import { publicAlbumClause, publicPhotoClause } from '@/lib/shiguang/album-privacy';
 import { formatDateTimeUTC8, getDateAfterDaysUTC8 } from '@/lib/utils/date-helpers';
 import { isValidChinaMobile, normalizeChinaMobile } from '@/lib/utils/phone';
 import {
@@ -142,7 +143,7 @@ function normalizeWriteValue(value: unknown): unknown {
 }
 
 const booleanColumnsByTable: Record<string, string[]> = {
-  albums: ['enable_tipping', 'enable_welcome_letter', 'enable_freeze', 'hide_root_folder'],
+  albums: ['enable_tipping', 'enable_welcome_letter', 'enable_freeze', 'hide_root_folder', 'show_shot_metadata'],
   album_photos: ['is_public', 'is_highlight'],
   booking_types: ['is_active'],
   allowed_cities: ['is_active'],
@@ -751,9 +752,18 @@ function finalizeSingleResult(payload: DbQueryPayload, rows: any[]): DbExecuteRe
   };
 }
 
+function scopePublicAlbums(table: string, whereClause: string, forMutation = false): string {
+  const albumScope = table === 'albums' ? publicAlbumClause('albums.id')
+    : ['album_folders', 'user_album_bindings'].includes(table) ? publicAlbumClause(`${table}.album_id`)
+    : table === 'album_photos' ? `${publicAlbumClause('album_photos.album_id')} AND ${publicPhotoClause('album_photos.id', { materializeSource: forMutation })}`
+    : ['photo_comments', 'photo_likes', 'photo_views'].includes(table) ? publicPhotoClause(`${table}.photo_id`)
+    : '';
+  return albumScope ? `${whereClause ? `${whereClause} AND` : 'WHERE'} ${albumScope}` : whereClause;
+}
+
 async function runSelect(payload: DbQueryPayload): Promise<DbExecuteResult> {
   const builder = new SqlValueBuilder();
-  const whereClause = buildWhereClause(payload.table, payload.filters, builder);
+  const whereClause = scopePublicAlbums(payload.table, buildWhereClause(payload.table, payload.filters, builder));
   const orderClause = buildOrderClause(payload.table, payload.orders);
   const limitClause = buildLimitClause(payload);
   const columnsExpr = parseSelectedColumns(payload.table, payload.columns);
@@ -1019,10 +1029,11 @@ async function fetchRowsAfterInsert(
     if (ids.length > 0) {
       const builder = new SqlValueBuilder();
       const placeholders = ids.map((value) => builder.add(value));
+      const filter = `WHERE ${escapeIdentifier(metadata.primaryKey)} IN (${placeholders.join(', ')})`;
       const sql = `
         SELECT ${columnsExpr}
         FROM ${escapeIdentifier(payload.table)}
-        WHERE ${escapeIdentifier(metadata.primaryKey)} IN (${placeholders.join(', ')})
+        ${scopePublicAlbums(payload.table, filter)}
       `;
       const result = await executeSQL(sql, builder.build());
       return result.rows;
@@ -1042,7 +1053,7 @@ async function fetchRowsAfterInsert(
     const sql = `
       SELECT ${columnsExpr}
       FROM ${escapeIdentifier(payload.table)}
-      WHERE ${conditionSql}
+      ${scopePublicAlbums(payload.table, `WHERE ${conditionSql}`)}
       ORDER BY ${escapeIdentifier(metadata.primaryKey)} ASC
     `;
     const result = await executeSQL(sql, builder.build());
@@ -1091,11 +1102,12 @@ async function fetchRowsByPrimaryKeys(payload: DbQueryPayload, primaryKeys: unkn
   const primaryKeyExpr = escapeIdentifier(metadata.primaryKey);
   const builder = new SqlValueBuilder();
   const placeholders = primaryKeys.map((value) => builder.add(value));
+  const whereClause = scopePublicAlbums(payload.table, `WHERE ${primaryKeyExpr} IN (${placeholders.join(', ')})`);
 
   const sql = `
     SELECT ${columnsExpr}
     FROM ${escapeIdentifier(payload.table)}
-    WHERE ${primaryKeyExpr} IN (${placeholders.join(', ')})
+    ${whereClause}
   `;
 
   const result = await executeSQL(sql, builder.build());
@@ -1212,7 +1224,7 @@ async function runUpdate(payload: DbQueryPayload): Promise<DbExecuteResult> {
     : [];
 
   const matchedPrimaryKeys = payload.selectAfterWrite
-    ? await fetchMatchedPrimaryKeysForUpdate(payload, whereClause, whereBuilder.build())
+    ? await fetchMatchedPrimaryKeysForUpdate(payload, scopePublicAlbums(payload.table, whereClause), whereBuilder.build())
     : null;
 
   const builder = new SqlValueBuilder();
@@ -1231,7 +1243,7 @@ async function runUpdate(payload: DbQueryPayload): Promise<DbExecuteResult> {
     };
   }
 
-  const updateWhereClause = buildWhereClause(payload.table, payload.filters, builder);
+  const updateWhereClause = scopePublicAlbums(payload.table, buildWhereClause(payload.table, payload.filters, builder), true);
 
   const sql = `
     UPDATE ${escapeIdentifier(payload.table)}
@@ -1302,7 +1314,7 @@ async function runDelete(payload: DbQueryPayload): Promise<DbExecuteResult> {
   let rowsBeforeDelete: Array<Record<string, any>> = [];
   if (payload.selectAfterWrite) {
     const selectBuilder = new SqlValueBuilder();
-    const selectWhereClause = buildWhereClause(payload.table, payload.filters, selectBuilder);
+    const selectWhereClause = scopePublicAlbums(payload.table, buildWhereClause(payload.table, payload.filters, selectBuilder));
     const orderClause = buildOrderClause(payload.table, payload.orders);
     const limitClause = buildLimitClause(payload);
     const columnsExpr = parseSelectedColumns(payload.table, payload.columns);
@@ -1321,7 +1333,7 @@ async function runDelete(payload: DbQueryPayload): Promise<DbExecuteResult> {
 
   const sql = `
     DELETE FROM ${escapeIdentifier(payload.table)}
-    ${whereClause}
+    ${scopePublicAlbums(payload.table, whereClause, true)}
   `;
 
   const deleteResult = await executeSQL(sql, whereBuilder.build());

@@ -19,7 +19,8 @@ export async function requireAdmin(request: Request): Promise<AuthUser> {
 export async function activeMembership(userId: string): Promise<{ spaceId: string; partnerId: string } | null> {
   const result = await rows(`SELECT m.space_id, partner.user_id AS partner_id FROM shiguang_members m
     JOIN shiguang_spaces s ON s.id=m.space_id JOIN shiguang_members partner ON partner.space_id=s.id AND partner.user_id<>m.user_id
-    WHERE m.user_id={{user}} AND s.enabled=1 AND s.deleted_at <=> NULL LIMIT 1`, { user: userId });
+    WHERE m.user_id={{user}} AND s.enabled=1 AND s.deleted_at <=> NULL
+      AND m.released_at <=> NULL AND partner.released_at <=> NULL LIMIT 1`, { user: userId });
   return result[0] ? { spaceId: String(result[0].space_id), partnerId: String(result[0].partner_id) } : null;
 }
 export async function requireMember(request: Request) {

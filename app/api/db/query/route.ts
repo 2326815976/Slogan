@@ -35,7 +35,7 @@ export async function POST(request: Request) {
 
     const result = await executeQuery(payload, authResolution.context);
     const status = result.error?.code === TRANSIENT_BACKEND_ERROR_CODE ? 503 : 200;
-    return NextResponse.json(result, { status });
+    return NextResponse.json(result, { status, headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
     if (isRetryableSqlError(error)) {
       return buildTransientResponse();

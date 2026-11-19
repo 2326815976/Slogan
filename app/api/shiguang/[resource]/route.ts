@@ -3,7 +3,7 @@ import { createEntry, createReply, listEntries, listReplies } from '@/lib/shigua
 import { body, respond } from '@/lib/shiguang/http';
 import { albumLink, updateMember } from '@/lib/shiguang/spaces';
 import { listGiftCards, listPrizes, listTicketHistory, saveOffering, ticketOperation } from '@/lib/shiguang/tickets';
-import { signedMediaLinks } from '@/lib/shiguang/media';
+import { memberMediaLinks } from '@/lib/shiguang/media';
 import { ShiguangError } from '@/lib/shiguang/validation';
 type Context = { params: Promise<{ resource: string }> };
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,7 @@ export async function POST(request: Request, context: Context) {
     if (resource === 'media-links') {
       const data = await body(request);
       if (!Array.isArray(data.ids) || !data.ids.every(id => typeof id === 'string')) throw new ShiguangError('媒体参数错误');
-      return signedMediaLinks(request, data.ids as string[]);
+      return memberMediaLinks(request, data.ids as string[]);
     }
     const access = await requireMember(request), data = await body(request);
     if (resource === 'actions') return ticketOperation(access.spaceId, access.user.id, data);

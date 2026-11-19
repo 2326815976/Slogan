@@ -20,6 +20,7 @@ interface Album {
   access_key: string;
   root_folder_name?: string | null;
   hide_root_folder?: boolean | null;
+  show_shot_metadata?: boolean | null;
 }
 
 interface AlbumFolder {
@@ -549,6 +550,39 @@ export function AlbumDetailPageContent({
     invalidatePublicGalleryCache();
     setShowToast({ message: '根目录名称已更新', type: 'success' });
     setTimeout(() => setShowToast(null), 3000);
+  };
+
+  const handleToggleShotMetadataVisibility = async () => {
+    if (!album || actionLoading || isSystemWallAlbum) return;
+
+    const dbClient = createClient();
+    if (!dbClient) {
+      setShowToast({ message: '服务初始化失败，请刷新后重试', type: 'error' });
+      setTimeout(() => setShowToast(null), 3000);
+      return;
+    }
+
+    const visible = !normalizeDbBoolean(album.show_shot_metadata, false);
+    setActionLoading(true);
+    try {
+      const { data, error } = await dbClient.from('albums')
+        .update({ show_shot_metadata: visible })
+        .eq('id', albumId)
+        .select('id, show_shot_metadata')
+        .maybeSingle();
+      if (error || !data) throw new Error(error?.message || '保存展示设置失败');
+      setAlbum((current) => current ? { ...current, show_shot_metadata: visible } : current);
+      setShowToast({ message: visible ? '已开启拍摄信息展示' : '已关闭拍摄信息展示', type: 'success' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存展示设置失败';
+      setShowToast({
+        message: isColumnMissingError(message, 'show_shot_metadata') ? '展示拍摄信息需要更新数据库和后端服务' : message,
+        type: 'error',
+      });
+    } finally {
+      setActionLoading(false);
+      setTimeout(() => setShowToast(null), 3000);
+    }
   };
 
   const handleToggleRootFolderVisibility = async () => {
@@ -2675,6 +2709,19 @@ export function AlbumDetailPageContent({
               {album?.title || '未命名空间'}
             </h1>
             <p className="text-sm text-[#5D4037]/60">密钥: {album?.access_key}</p>
+            {album && !isSelectionMode && (
+              <label className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#FFC857]/20 px-3 py-1.5 text-sm font-medium text-[#5D4037]">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="h-4 w-4 accent-[#FFC857]"
+                  checked={normalizeDbBoolean(album.show_shot_metadata, false)}
+                  disabled={actionLoading}
+                  onChange={() => void handleToggleShotMetadataVisibility()}
+                />
+                展示拍摄时间和地点
+              </label>
+            )}
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">

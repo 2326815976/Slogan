@@ -1,9 +1,9 @@
 import 'server-only';
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto';
 import { getCloudBaseApp } from '@/lib/cloudbase/sdk';
 import { env } from '@/lib/env';
 import { executeSQL } from '@/lib/cloudbase/sql-executor';
-import { activeMembership, requireUser } from './access';
+import { activeMembership, requireMember, requireUser } from './access';
 import { rows, type Row } from './db';
 import { ShiguangError, uuid } from './validation';
 import type { AuthUser } from '@/lib/auth/types';
@@ -28,20 +28,16 @@ export function decryptMedia(encrypted: Buffer): Buffer {
   return Buffer.concat([decipher.update(encrypted.subarray(32)), decipher.final()]);
 }
 async function canReadMedia(user: Pick<AuthUser, 'id' | 'role'>, row: Row) {
-  if (row.purpose === 'admin' && user.role === 'admin') return true;
-  if (user.role === 'admin') {
-    const ref = `/api/shiguang/media/${row.id}`;
-    const metadata = await rows('SELECT user_id FROM shiguang_members WHERE avatar={{ref}} LIMIT 1', { ref });
-    if (metadata.length) return true;
-  }
   const membership = await activeMembership(user.id);
-  if (!membership) return false;
-  if (row.space_id === membership.spaceId) return true;
-  // 创建时上传的封面尚无 space_id，只允许引用该图片的空间成员读取。
+  if (row.space_id) return row.space_id === membership?.spaceId;
   const ref = `/api/shiguang/media/${row.id}`;
-  const linked = await rows(`SELECT s.id FROM shiguang_spaces s WHERE s.id={{space}} AND
-    (s.cover={{ref}} OR EXISTS(SELECT 1 FROM shiguang_members m WHERE m.space_id=s.id AND m.avatar={{ref}}))`, { space: membership.spaceId, ref });
-  return linked.length > 0;
+  const linked = membership ? await rows(`SELECT s.id FROM shiguang_spaces s WHERE s.id={{space}} AND
+    (s.cover={{ref}} OR EXISTS(SELECT 1 FROM shiguang_members m WHERE m.space_id=s.id AND m.avatar={{ref}}))`, { space: membership.spaceId, ref }) : [];
+  if (linked.length) return true;
+  if (row.purpose !== 'admin' || user.role !== 'admin' || row.uploaded_by !== user.id) return false;
+  const references = await rows(`SELECT 1 FROM shiguang_spaces WHERE cover={{ref}}
+    UNION ALL SELECT 1 FROM shiguang_members WHERE avatar={{ref}} LIMIT 1`, { ref });
+  return references.length === 0;
 }
 export async function mediaRecord(id: string, user: Pick<AuthUser, 'id' | 'role'>) {
   const result = await rows('SELECT * FROM shiguang_media WHERE id={{id}}', { id: uuid(id) });
@@ -54,8 +50,7 @@ export async function uploadMedia(request: Request) {
   const form = await request.formData();
   const admin = form.get('purpose') === 'admin';
   if (admin && user.role !== 'admin') throw new ShiguangError('需要管理员权限', 403);
-  const membership = admin ? null : await activeMembership(user.id);
-  if (!admin && !membership) throw new ShiguangError('空间不可访问', 403);
+  const membership = admin ? null : await requireMember(request);
   const file = form.get('file');
   if (!(file instanceof File)) throw new ShiguangError('请选择图片或录音');
   const type = file.type.split(';')[0].toLowerCase();
@@ -77,31 +72,20 @@ export async function uploadMedia(request: Request) {
   { id, space: membership?.spaceId || null, user: user.id, purpose: admin ? 'admin' : 'member', type, file: result.fileID, size: buffer.length });
   return { reference: `/api/shiguang/media/${id}` };
 }
-export async function signedMediaLinks(request: Request, ids: string[]) {
+export async function memberMediaLinks(request: Request, ids: string[]) {
   const user = await requireUser(request);
   if (ids.length > 100) throw new ShiguangError('媒体数量过多');
   const result: Record<string, string> = {};
   for (const id of new Set(ids)) {
-    await mediaRecord(id, user);
-    const payload = Buffer.from(JSON.stringify({ id, user: user.id, expires: Date.now() + 5 * 60000 })).toString('base64url');
-    const signature = createHmac('sha256', secret()).update(payload).digest('base64url');
-    result[`/api/shiguang/media/${id}`] = `/api/shiguang/media/${id}?token=${payload}.${signature}`;
+    try { await mediaRecord(id, user); }
+    catch (error) {
+      if (error instanceof ShiguangError && error.status === 403) continue;
+      throw error;
+    }
+    const path = `/api/shiguang/media/${id}`;
+    result[path] = path;
   }
   return result;
-}
-export async function mediaUser(request: Request, id: string): Promise<Pick<AuthUser, 'id' | 'role'>> {
-  const token = new URL(request.url).searchParams.get('token');
-  if (!token) return requireUser(request);
-  const [payload, signature] = token.split('.');
-  if (!payload || !signature || payload.length > 1000) throw new ShiguangError('媒体授权无效', 403);
-  const expected = createHmac('sha256', secret()).update(payload).digest();
-  const supplied = Buffer.from(signature, 'base64url');
-  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) throw new ShiguangError('媒体授权无效', 403);
-  const parsed: { id?: string; user?: string; expires?: number } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-  if (parsed.id !== id || !parsed.expires || parsed.expires < Date.now()) throw new ShiguangError('媒体授权已过期，请刷新', 403);
-  const users = await rows('SELECT id,role FROM users WHERE id={{user}} AND is_disabled=0 AND deleted_at <=> NULL', { user: parsed.user });
-  if (!users[0]) throw new ShiguangError('账号不可用', 403);
-  return { id: String(users[0].id), role: users[0].role === 'admin' ? 'admin' : 'user' };
 }
 export async function downloadMedia(row: Row) {
   const result = await getCloudBaseApp().downloadFile({ fileID: String(row.file_id) }) as { fileContent: Buffer };

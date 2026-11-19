@@ -11,6 +11,7 @@ import {
   WALL_THUMBNAIL_QUALITY,
 } from '@/lib/gallery/wall-image-config';
 import { hydrateCloudBaseTempUrlsInRows } from '@/lib/cloudbase/storage-url';
+import { checkAlbumAccess, privateAlbumAssetPath, protectAlbumPhotoUrls, publicAlbumClause, publicPhotoClause } from '@/lib/shiguang/album-privacy';
 import { normalizeAccessKey } from '@/lib/utils/access-key';
 import {
   executeSQL,
@@ -420,10 +421,7 @@ let albumFolderHiddenColumnCache: {
   expiresAt: number;
 } | null = null;
 
-let albumHideRootFolderColumnCache: {
-  value: boolean;
-  expiresAt: number;
-} | null = null;
+const albumOptionalColumnCache = new Map<string, { value: boolean; expiresAt: number }>();
 
 const tableExistenceCache = new Map<string, {
   value: boolean;
@@ -605,10 +603,11 @@ async function hasAlbumFolderHiddenColumn(): Promise<boolean> {
   return exists;
 }
 
-async function hasAlbumHideRootFolderColumn(): Promise<boolean> {
+async function hasAlbumOptionalColumn(column: 'hide_root_folder' | 'show_shot_metadata'): Promise<boolean> {
   const now = Date.now();
-  if (albumHideRootFolderColumnCache && albumHideRootFolderColumnCache.expiresAt > now) {
-    return albumHideRootFolderColumnCache.value;
+  const cached = albumOptionalColumnCache.get(column);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
   }
 
   let exists = false;
@@ -619,9 +618,10 @@ async function hasAlbumHideRootFolderColumn(): Promise<boolean> {
         FROM information_schema.columns
         WHERE table_schema = DATABASE()
           AND table_name = 'albums'
-          AND column_name = 'hide_root_folder'
+          AND column_name = {{column}}
         LIMIT 1
-      `
+      `,
+      { column }
     );
     exists = toNumber(result.rows[0]?.value, 0) > 0;
   } catch (error) {
@@ -631,10 +631,10 @@ async function hasAlbumHideRootFolderColumn(): Promise<boolean> {
     exists = false;
   }
 
-  albumHideRootFolderColumnCache = {
+  albumOptionalColumnCache.set(column, {
     value: exists,
     expiresAt: now + SHOT_DATE_COLUMN_CACHE_TTL_MS,
-  };
+  });
   return exists;
 }
 
@@ -1224,7 +1224,7 @@ async function rpcGetPublicGallery(args: Record<string, unknown>, context: AuthC
   const hasShotLocationColumn = await hasAlbumPhotoShotLocationColumn();
   const hasDownloadCountColumn = await hasAlbumPhotoDownloadCountColumn();
   const hasFolderHiddenColumn = await hasAlbumFolderHiddenColumn();
-  const hasHideRootFolderColumn = await hasAlbumHideRootFolderColumn();
+  const hasHideRootFolderColumn = await hasAlbumOptionalColumn('hide_root_folder');
   const shotDateSelect = hasShotDateColumn ? 'p.shot_date AS shot_date' : 'NULL AS shot_date';
   const shotLocationSelect = hasShotLocationColumn
     ? 'p.shot_location AS shot_location'
@@ -1328,7 +1328,7 @@ async function rpcGetPublicGallery(args: Record<string, unknown>, context: AuthC
           LEFT JOIN photo_likes pl
             ON pl.photo_id = p.id
            AND pl.user_id = {{user_id}}
-          WHERE p.album_id = {{wall_album_id}}
+          WHERE p.album_id = {{wall_album_id}} AND ${publicPhotoClause('p.id')}
             AND ${folderFilter.clause}
           ORDER BY ${photoOrderBy}
           LIMIT {{limit}} OFFSET {{offset}}
@@ -1366,7 +1366,7 @@ async function rpcGetPublicGallery(args: Record<string, unknown>, context: AuthC
           p.folder_id,
           0 AS is_liked
         FROM album_photos p
-        WHERE p.album_id = {{wall_album_id}}
+        WHERE p.album_id = {{wall_album_id}} AND ${publicPhotoClause('p.id')}
           AND ${folderFilter.clause}
         ORDER BY ${photoOrderBy}
         LIMIT {{limit}} OFFSET {{offset}}
@@ -1391,7 +1391,7 @@ async function rpcGetPublicGallery(args: Record<string, unknown>, context: AuthC
     `
       SELECT COUNT(*) AS total
       FROM album_photos p
-      WHERE p.album_id = {{wall_album_id}}
+      WHERE p.album_id = {{wall_album_id}} AND ${publicPhotoClause('p.id')}
         AND ${folderFilter.clause}
     `,
     wallValues
@@ -1431,7 +1431,7 @@ async function rpcGetPublicGallery(args: Record<string, unknown>, context: AuthC
   };
 }
 
-async function rpcGetAlbumContent(args: Record<string, unknown>) {
+async function rpcGetAlbumContent(args: Record<string, unknown>, context: AuthContext) {
   const inputKey = normalizeAccessKey(args.input_key);
   if (!inputKey) {
     throw new Error('密钥错误');
@@ -1442,6 +1442,9 @@ async function rpcGetAlbumContent(args: Record<string, unknown>) {
   const hasDownloadCountColumn = await hasAlbumPhotoDownloadCountColumn();
   const hasAlbumFreezeColumn = await hasAlbumEnableFreezeColumn();
   const hasAlbumWelcomeLetterMode = await hasAlbumWelcomeLetterModeColumn();
+  const showShotMetadataSelect = (await hasAlbumOptionalColumn('show_shot_metadata'))
+    ? 'show_shot_metadata'
+    : '0 AS show_shot_metadata';
   const shotDateSelect = hasShotDateColumn ? 'shot_date' : 'NULL AS shot_date';
   const shotLocationSelect = hasShotLocationColumn
     ? 'shot_location'
@@ -1467,6 +1470,7 @@ async function rpcGetAlbumContent(args: Record<string, unknown>) {
         enable_welcome_letter,
         ${welcomeLetterModeSelect},
         ${enableFreezeSelect},
+        ${showShotMetadataSelect},
         donation_qr_code_url,
         recipient_name,
         created_at,
@@ -1489,7 +1493,13 @@ async function rpcGetAlbumContent(args: Record<string, unknown>) {
     throw new Error('密钥错误');
   }
 
-  await hydrateCloudBaseTempUrlsInRows([album], ['cover_url', 'donation_qr_code_url']);
+  const protectedAlbum = await checkAlbumAccess(String(album.id), context.user?.id);
+  if (protectedAlbum) {
+    album.cover_url = album.cover_url ? privateAlbumAssetPath(String(album.id), 'cover') : null;
+    album.donation_qr_code_url = null;
+  } else {
+    await hydrateCloudBaseTempUrlsInRows([album], ['cover_url', 'donation_qr_code_url']);
+  }
 
   const foldersResult = await executeSQL(
     `
@@ -1540,8 +1550,11 @@ async function rpcGetAlbumContent(args: Record<string, unknown>) {
     );
 
     photoRows = photosResult.rows;
-    await hydrateCloudBaseTempUrlsInRows(photoRows, ['url', 'thumbnail_url', 'preview_url', 'original_url']);
-    await ensurePhotoRowsHaveDimensions(photoRows, { maxProbeCount: PHOTO_DIMENSION_EAGER_LIMIT });
+    if (protectedAlbum) photoRows.forEach(protectAlbumPhotoUrls);
+    else {
+      await hydrateCloudBaseTempUrlsInRows(photoRows, ['url', 'thumbnail_url', 'preview_url', 'original_url']);
+      await ensurePhotoRowsHaveDimensions(photoRows, { maxProbeCount: PHOTO_DIMENSION_EAGER_LIMIT });
+    }
 
     const photoIds = photoRows.map((row) => String(row.id));
     if (photoIds.length > 0) {
@@ -1596,19 +1609,21 @@ async function rpcGetAlbumContent(args: Record<string, unknown>) {
       created_at: album.created_at,
       expires_at: album.effective_expires_at,
       is_expired: toBoolean(album.is_expired),
+      show_shot_metadata: toBoolean(album.show_shot_metadata),
       ...(() => {
         const welcomeLetterMode = normalizeWelcomeLetterMode(
           album.welcome_letter_mode,
           album.enable_welcome_letter === null ? true : toBoolean(album.enable_welcome_letter)
         );
         return {
-          enable_tipping: toBoolean(album.enable_tipping),
+          enable_tipping: !protectedAlbum && toBoolean(album.enable_tipping),
           enable_welcome_letter: welcomeLetterMode !== 'none',
           welcome_letter_mode: welcomeLetterMode,
-          enable_freeze: album.enable_freeze === null ? true : toBoolean(album.enable_freeze),
+          enable_freeze: !protectedAlbum && (album.enable_freeze === null || toBoolean(album.enable_freeze)),
           recipient_name: album.recipient_name ?? '拾光者',
         };
       })(),
+      is_private_space: protectedAlbum,
     },
     folders: foldersResult.rows.map((row) => ({
       id: String(row.id),
@@ -1619,7 +1634,7 @@ async function rpcGetAlbumContent(args: Record<string, unknown>) {
   };
 }
 
-async function rpcGetAlbumPhotoPage(args: Record<string, unknown>) {
+async function rpcGetAlbumPhotoPage(args: Record<string, unknown>, context: AuthContext) {
   const inputKey = normalizeAccessKey(args.input_key);
   if (!inputKey) {
     throw new Error('密钥错误');
@@ -1656,6 +1671,7 @@ async function rpcGetAlbumPhotoPage(args: Record<string, unknown>) {
     throw new Error('密钥错误');
   }
 
+  const protectedAlbum = await checkAlbumAccess(String(album.id), context.user?.id);
   const folderFilter = resolveAlbumFolderFilter(args.folder_id);
   const baseValues = {
     album_id: String(album.id),
@@ -1697,8 +1713,11 @@ async function rpcGetAlbumPhotoPage(args: Record<string, unknown>) {
       offset,
     }
   );
-  await hydrateCloudBaseTempUrlsInRows(photosResult.rows, ['url', 'thumbnail_url', 'preview_url', 'original_url']);
-  await ensurePhotoRowsHaveDimensions(photosResult.rows);
+  if (protectedAlbum) photosResult.rows.forEach(protectAlbumPhotoUrls);
+  else {
+    await hydrateCloudBaseTempUrlsInRows(photosResult.rows, ['url', 'thumbnail_url', 'preview_url', 'original_url']);
+    await ensurePhotoRowsHaveDimensions(photosResult.rows);
+  }
 
   const countResult = await executeSQL(
     `
@@ -1732,7 +1751,7 @@ async function rpcBindUserToAlbum(args: Record<string, unknown>, context: AuthCo
     `
       SELECT id, title, cover_url, created_at
       FROM albums
-      WHERE access_key = {{access_key}}
+      WHERE access_key = {{access_key}} AND ${publicAlbumClause('albums.id')}
       LIMIT 1
     `,
     {
@@ -1786,7 +1805,7 @@ async function rpcGetUserBoundAlbums(context: AuthContext) {
         END AS is_expired
       FROM user_album_bindings b
       JOIN albums a ON a.id = b.album_id
-      WHERE b.user_id = {{user_id}}
+      WHERE b.user_id = {{user_id}} AND ${publicAlbumClause('a.id')}
       ORDER BY b.created_at DESC
     `,
     {
@@ -2108,6 +2127,7 @@ async function rpcPinPhotoToWall(args: Record<string, unknown>) {
       JOIN albums a ON a.id = p.album_id
       WHERE a.access_key = {{access_key}}
         AND p.id = {{photo_id}}
+        AND ${publicAlbumClause('a.id')}
       LIMIT 1
     `,
     {
@@ -2297,6 +2317,7 @@ async function rpcDeleteAlbumPhoto(args: Record<string, unknown>) {
       JOIN albums a ON a.id = p.album_id
       WHERE a.access_key = {{access_key}}
         AND p.id = {{photo_id}}
+        AND ${publicAlbumClause('a.id')}
       LIMIT 1
     `,
     {
@@ -2703,6 +2724,7 @@ async function rpcPostAlbumComment(args: Record<string, unknown>, context: AuthC
   if (!result.rows[0]) {
     throw new Error('无权操作：密钥错误或照片不属于该空间');
   }
+  await checkAlbumAccess(String(result.rows[0].id), context.user?.id);
 
   let nickname = '访客';
   let isAdminReply = false;
@@ -4024,10 +4046,10 @@ export async function executeRpc(functionName: string, args: Record<string, unkn
         data = await rpcGetPublicGallery(args, context);
         break;
       case 'get_album_content':
-        data = await rpcGetAlbumContent(args);
+        data = await rpcGetAlbumContent(args, context);
         break;
       case 'get_album_photo_page':
-        data = await rpcGetAlbumPhotoPage(args);
+        data = await rpcGetAlbumPhotoPage(args, context);
         break;
       case 'bind_user_to_album':
         data = await rpcBindUserToAlbum(args, context);

@@ -37,7 +37,7 @@ export async function saveOffering(resource: 'prizes' | 'gift-cards', space: str
   const table = gift ? 'shiguang_gift_cards' : 'shiguang_prizes';
   const label = gift ? '卡券' : '奖项';
   const name = remove ? '' : text(data.name, `${label}名称`, 100);
-  const content = remove ? '' : text(data.content, `${label}内容`, 5000);
+  const content = remove ? '' : text(data.content, `${label}内容`, 5000, gift);
   const image = remove ? '' : mediaReference(data.image);
   const params = { id: recordId, space, user, partner, name, content, image, version: id ? integer(data.version, 1, 2147483647) : 1 };
   if (image) {

@@ -134,6 +134,7 @@ const metadataList: TableMetadata[] = [
       'welcome_letter_mode',
       'enable_freeze',
       'hide_root_folder',
+      'show_shot_metadata',
       'donation_qr_code_url',
       'expires_at',
       'created_by',

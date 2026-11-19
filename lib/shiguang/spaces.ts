@@ -1,7 +1,7 @@
 import 'server-only';
 import { normalizeOptionalAuthText } from '@/lib/auth/text';
 import { executeSQL } from '@/lib/cloudbase/sql-executor';
-import { hydrateCloudBaseTempUrlsInRows } from '@/lib/cloudbase/storage-url';
+import { privateAlbumAssetPath, publicAlbumClause } from './album-privacy';
 import { ACTIVE_SPACE_SQL } from './access';
 import { callProcedure, rows, timestamp, type Row } from './db';
 import { listAnniversaries, toEntry } from './entries';
@@ -27,16 +27,21 @@ export async function summary(spaceId: string, userId: string, channel: 'web' | 
     publication(channel),
   ]);
   const source = albums[0];
-  const cover = normalizeOptionalAuthText(source?.cover_url) || '';
+  const cover = normalizeOptionalAuthText(source?.cover_url) ? privateAlbumAssetPath(String(source.id), 'cover') : '';
   const album = source ? { id: String(source.id), title: String(source.title || '专属空间'), cover, coverUrl: cover } : null;
-  if (album) await hydrateCloudBaseTempUrlsInRows([album], ['coverUrl']);
   return { userId, today, space: current, album, anniversaries, moods: moods.map(toEntry), balances: Object.fromEntries(wallets.map(r => [String(r.user_id), Number(r.balance)])), publishState: publishState === 'beta' ? 'beta' : 'online' };
 }
-export async function adminSpaces(page: number) {
+export function adminSpaceView(current: ShiguangSpace, userId: string): ShiguangSpace {
+  if (current.enabled && !current.deletedAt && current.members.some(item => item.userId === userId)) return current;
+  return { ...current, name: '拾光空间', cover: '', letter: '', members: current.members.map(item => ({
+    ...item, name: item.role === 'boy' ? '绑定成员（男）' : '绑定成员（女）', avatar: '',
+  })) };
+}
+export async function adminSpaces(page: number, userId: string) {
   // 软删除空间不参与管理列表和分页，成员绑定与历史数据仍保留。
   const result = await rows(`SELECT * FROM shiguang_spaces WHERE deleted_at <=> NULL ORDER BY created_at DESC,id DESC LIMIT 21 OFFSET ${integer(page, 0, 100000) * 20}`);
   const members = result.length ? await rows(`SELECT * FROM shiguang_members WHERE space_id IN (${result.map((_, i) => `{{s${i}}}`).join(',')})`, Object.fromEntries(result.map((r, i) => [`s${i}`, r.id]))) : [];
-  return { items: result.slice(0, 20).map(r => space(r, members.filter(m => m.space_id === r.id).map(member))), hasMore: result.length > 20 };
+  return { items: result.slice(0, 20).map(r => adminSpaceView(space(r, members.filter(m => m.space_id === r.id).map(member)), userId)), hasMore: result.length > 20 };
 }
 export async function adminOptions(): Promise<AdminOptions> {
   const [users, albums] = await Promise.all([
@@ -46,7 +51,8 @@ export async function adminOptions(): Promise<AdminOptions> {
         WHERE m.user_id=u.id AND s.deleted_at <=> NULL) AS bound
       FROM users u LEFT JOIN profiles p ON p.id=u.id
       WHERE u.deleted_at <=> NULL AND u.is_disabled=0 ORDER BY u.created_at DESC LIMIT 2000`),
-    rows("SELECT id,title,access_key FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000' ORDER BY created_at DESC LIMIT 2000"),
+    rows(`SELECT id,title FROM albums WHERE id <> '00000000-0000-0000-0000-000000000000'
+      AND ${publicAlbumClause('albums.id')} ORDER BY created_at DESC LIMIT 2000`),
   ]);
   // 选项显示 ID 后 6 位、手机号和备注，完整 ID 保留用于检索与绑定。
   return {
@@ -61,7 +67,7 @@ export async function adminOptions(): Promise<AdminOptions> {
         bound: Boolean(Number(r.bound)),
       };
     }),
-    albums: albums.map(r => ({ id: String(r.id), title: String(r.title), label: `${String(r.title)} · ${String(r.access_key || '').trim() || '未设置密钥'}` })),
+    albums: albums.map(r => ({ id: String(r.id), title: String(r.title), label: String(r.title) })),
   };
 }
 async function validateAdminImage(ref: string, adminId: string, spaceId?: string) {
@@ -76,6 +82,7 @@ export async function createSpace(adminId: string, data: Record<string, unknown>
   if (boyId === girlId) throw new ShiguangError('男生女生必须为不同账号');
   const name = text(data.name, '空间名称', 100), cover = mediaReference(data.cover, true), letter = text(data.letter, '信件', 20000, false);
   if (typeof data.enabled !== 'boolean') throw new ShiguangError('空间状态错误');
+  if ((await rows('SELECT 1 FROM shiguang_spaces WHERE album_id={{album}} LIMIT 1', { album: albumId })).length) throw new ShiguangError('相册已用于私有空间，请选择其他相册', 409);
   await validateAdminImage(cover, adminId);
   await callProcedure('shiguang_create_v2', [id, adminId, boyId, girlId, name, cover, letter, albumId, data.enabled ? 1 : 0]);
   return getSpace(id);
@@ -93,12 +100,14 @@ export async function updateSpace(adminId: string, id: string, data: Record<stri
     if (!result.affectedRows) throw new ShiguangError('空间已变化，请刷新', 409);
     return { id };
   }
-  const name = text(data.name, '空间名称', 100), cover = mediaReference(data.cover, true), letter = text(data.letter, '信件', 20000, false), albumId = uuid(data.albumId);
   if (typeof data.enabled !== 'boolean') throw new ShiguangError('空间状态错误');
+  if (data.albumId !== undefined && data.albumId !== current.albumId) throw new ShiguangError('私有相册绑定后不可更换', 409);
+  const canEditContent = current.enabled && current.members.some(item => item.userId === adminId);
+  const name = canEditContent ? text(data.name, '空间名称', 100) : current.name;
+  const cover = canEditContent ? mediaReference(data.cover, true) : current.cover;
+  const letter = canEditContent ? text(data.letter, '信件', 20000, false) : current.letter;
   if (cover !== current.cover) await validateAdminImage(cover, adminId, id);
-  const albums = await rows('SELECT id FROM albums WHERE id={{albumId}}', { albumId });
-  if (!albums.length) throw new ShiguangError('返图空间不存在');
-  const result = await executeSQL('UPDATE shiguang_spaces SET name={{name}},cover={{cover}},letter={{letter}},album_id={{albumId}},enabled={{enabled}},updated_at=UTC_TIMESTAMP(3),version=version+1 WHERE id={{id}} AND version={{version}} AND deleted_at <=> NULL', { id, version, name, cover, letter, albumId, enabled: data.enabled ? 1 : 0 });
+  const result = await executeSQL('UPDATE shiguang_spaces SET name={{name}},cover={{cover}},letter={{letter}},enabled={{enabled}},updated_at=UTC_TIMESTAMP(3),version=version+1 WHERE id={{id}} AND version={{version}} AND deleted_at <=> NULL', { id, version, name, cover, letter, enabled: data.enabled ? 1 : 0 });
   if (!result.affectedRows) throw new ShiguangError('空间已变化，请刷新', 409);
   return getSpace(id);
 }

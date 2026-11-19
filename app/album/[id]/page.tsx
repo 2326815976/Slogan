@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { Download, Sparkles, CheckSquare, Square, Trash2, Heart, RotateCw } from 'lucide-react';
+import { Download, Sparkles, CheckSquare, Square, Trash2, Heart, RotateCw, MapPin } from 'lucide-react';
 import LetterOpeningModal from '@/components/LetterOpeningModal';
 import DonationModal from '@/components/DonationModal';
 import WechatDownloadGuide from '@/components/WechatDownloadGuide';
@@ -52,6 +52,8 @@ interface Photo {
   card_url_resolved?: string;
   fullscreen_url_resolved?: string;
   story_text?: string | null;
+  shot_date?: string | null;
+  shot_location?: string | null;
   has_story?: boolean;
   is_highlight?: boolean;
   story_open?: boolean;
@@ -76,6 +78,7 @@ interface AlbumData {
     enable_welcome_letter?: boolean;
     welcome_letter_mode?: WelcomeLetterMode | null;
     enable_freeze?: boolean;
+    show_shot_metadata?: boolean;
     donation_qr_code_url?: string | null;
     recipient_name?: string;
     expires_at?: string;
@@ -2446,6 +2449,17 @@ export default function AlbumDetailPage() {
                   </motion.button>
                 </div>
 
+                {albumData.album.show_shot_metadata && (photo.shot_date || photo.shot_location) && (
+                  <div className="flex flex-col items-end gap-0.5 px-3 py-2 text-right text-xs text-[#5D4037]/75">
+                    {photo.shot_location && (
+                      <div className="flex max-w-full items-center gap-1" title={photo.shot_location}>
+                        <MapPin className="h-3 w-3 shrink-0 text-[#A67E52]" aria-hidden="true" />
+                        <span className="truncate">{photo.shot_location}</span>
+                      </div>
+                    )}
+                    {photo.shot_date && <time dateTime={photo.shot_date}>{photo.shot_date}</time>}
+                  </div>
+                )}
               </motion.div>
             </div>
               ))}

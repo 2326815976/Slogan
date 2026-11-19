@@ -2,15 +2,16 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Heart, CalendarHeart, Sparkles, ScrollText, MessageCircleHeart, Smile, Camera, Ticket, LockKeyhole } from 'lucide-react';
+import { Heart, CalendarHeart, Sparkles, ScrollText, MessageCircleHeart, Camera, Ticket, LockKeyhole } from 'lucide-react';
 import PrimaryPageShell from '@/components/shell/PrimaryPageShell';
 import SecondaryPageShell from '@/components/shell/SecondaryPageShell';
 import { spaceRequest, uploadSpaceMedia } from '@/lib/shiguang/client';
 import { useSpace } from './components/SpaceContext';
+import TodayMood from './components/TodayMood';
 
 const modules = [
   ['anniversary', '纪念日', CalendarHeart, '记住每个特别的日子'], ['wish', '许愿池', Sparkles, '让小愿望慢慢实现'], ['promise', '心约', ScrollText, '写下两个人的约定'],
-  ['whisper', '絮语', MessageCircleHeart, '有些话，只想说给你'], ['mood', '心情', Smile, '分享今天的晴与雨'], ['collection', '拾物采集', Camera, '收藏路上的小美好'], ['tickets', '心意奖券', Ticket, '把偏爱变成小惊喜'],
+  ['whisper', '絮语', MessageCircleHeart, '有些话，只想说给你'], ['collection', '拾物采集', Camera, '收藏路上的小美好'], ['tickets', '心意奖券', Ticket, '把偏爱变成小惊喜'],
 ] as const;
 export default function Page() {
   const { summary, refresh } = useSpace();
@@ -33,7 +34,7 @@ export default function Page() {
           <div className="sg-member">
             {m.avatar ? <img src={m.avatar} alt="" className="sg-avatar" /> : <span className="sg-avatar grid place-items-center text-2xl">{m.name.slice(0, 1)}</span>}
             <strong>{m.name}</strong>
-            <Link href="/shiguang/mood" className="sg-mood">{summary.moods.find(e => e.createdBy === m.userId)?.payload.mood || '今日未记录'}</Link>
+            {m.userId === userId ? <TodayMood /> : <span className="sg-mood">{summary.moods.find(entry => entry.createdBy === m.userId)?.payload.mood || '记录心情'}</span>}
             {m.userId === userId && <button className="sg-link" onClick={() => { setName(self.name); setAvatar(self.avatar); setEditing(true); }}>编辑我的资料</button>}
           </div>
         </div>)}
