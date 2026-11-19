@@ -28,41 +28,49 @@ export default function EntriesPage({ kind }: { kind: EntryKind }) {
     {error && <p role="alert" className="sg-error">{error}</p>}
     {editing !== undefined && <EntryForm key={editing?.id || 'new'} kind={kind} entry={editing || undefined} onCancel={() => setEditing(undefined)} onSaved={async () => { setEditing(undefined); await Promise.all([load(), refresh()]); }} />}
     {loading ? <p role="status">正在翻开记录…</p> : !items.length && <p className="sg-card text-center">这里还没有记录，写下我们的第一笔吧。</p>}
-    {items.length > 0 && <div className={isAnniversary ? 'sg-anniversary-grid' : 'sg-stack'}>
+    {items.length > 0 && <div className={isAnniversary ? 'sg-anniversary-grid' : 'sg-list-stack'}>
       {items.map(entry => {
         const { id, payload, createdBy, createdAt } = entry;
         const body = payload.content || payload.description;
-        return <article className="sg-card" key={id}>
-          {(kind !== 'whisper' || payload.title) && <h2 className="text-lg font-semibold">{payload.name || payload.title || payload.mood || '一个愿望'}</h2>}
+        const canManage = canManageEntry(entry, summary.userId, summary.today);
+        const author = summary.space.members.find(member => member.userId === createdBy)?.name || '空间成员';
+        const fulfilled = payload.status === 'fulfilled';
+        const days = isAnniversary ? anniversaryDays(payload, summary.today) : 0;
+        const countLabel = payload.direction === 'down' ? (days < 0 ? '已过' : '距离约定') : (days < 0 ? '距离这一天' : '一起走过');
+        return <article className="sg-list-item" key={id}>
+          {kind === 'wish' ? <div className="sg-list-line">
+            <h2 className={`sg-list-title sg-text${fulfilled ? ' sg-wish-finished' : ''}`}>{body || '一个愿望'}</h2>
+            <span className={`sg-list-tag${fulfilled ? ' sg-list-tag--done' : ''}`}>{fulfilled ? '已实现' : '未实现'}</span>
+          </div> : (kind !== 'whisper' || payload.title) && <h2 className="sg-list-title">{payload.name || payload.title || payload.mood || '一条记录'}</h2>}
           {isAnniversary && <div className="sg-anniversary-summary">
             <div className="sg-anniversary-count">
-              <span>{payload.direction === 'down' ? '距离约定' : '一起走过'}</span>
-              <span className="sg-anniversary-value"><strong>{anniversaryDays(payload, summary.today)}</strong>天</span>
+              <span>{countLabel}</span>
+              <span className="sg-anniversary-value"><strong>{Math.abs(days)}</strong>天</span>
             </div>
-            <p className="sg-muted">{payload.date} · {payload.direction === 'down' ? '倒数' : '正数'}</p>
+            <p className="sg-list-meta">{payload.date}</p>
           </div>}
-          {kind === 'wish' && <span className="sg-muted">{payload.status === 'fulfilled' ? '已实现' : '未实现'}</span>}
-          {kind === 'mood' && <p className="sg-muted">{entry.moodDate}</p>}
-          {body && <p className="sg-text my-3">{body}</p>}
+          {kind !== 'wish' && body && <p className="sg-text">{body}</p>}
           {kind === 'whisper' && <MessageMedia {...payload} />}
-          <p className="sg-muted sg-entry-byline">{summary.space.members.find(member => member.userId === createdBy)?.name} · {displayTime(createdAt)}</p>
-          <div className="sg-actions">
-            {canManageEntry(entry, summary.userId, summary.today) && <>
-              <button className="sg-link" disabled={busy} onClick={() => setEditing(entry)}>编辑</button>
-              <button className="sg-link sg-danger" disabled={busy} onClick={async () => {
-                if (!confirm(kind === 'whisper' ? '删除这条絮语及其全部回复？' : '删除这条记录？')) return;
-                setBusy(true);
-                try {
-                  await spaceRequest(`/${kind}/${id}`, 'DELETE', { version: entry.version });
-                  await Promise.all([load(), refresh()]);
-                } catch (cause) {
-                  setError((cause as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}>删除</button>
-            </>}
-            {kind === 'whisper' && <button className="sg-link" onClick={() => setReplies(replies === id ? '' : id)}>{replies === id ? '收起回复' : '查看 / 写回复'}</button>}
+          <div className="sg-list-footer">
+            <p className="sg-list-meta">{author} · {(kind === 'mood' && entry.moodDate) || displayTime(createdAt)}</p>
+            {(canManage || kind === 'whisper') && <div className="sg-list-actions">
+              {kind === 'whisper' && <button className="sg-link sg-list-action sg-list-action--accent" aria-expanded={replies === id} onClick={() => setReplies(replies === id ? '' : id)}>{replies === id ? '收起回复' : '查看与回复'}</button>}
+              {canManage && <>
+                <button className="sg-link sg-list-action" disabled={busy} onClick={() => setEditing(entry)}>编辑</button>
+                <button className="sg-link sg-list-action sg-danger" disabled={busy} onClick={async () => {
+                  if (!confirm(kind === 'whisper' ? '删除这条絮语及其全部回复？' : '删除这条记录？')) return;
+                  setBusy(true);
+                  try {
+                    await spaceRequest(`/${kind}/${id}`, 'DELETE', { version: entry.version });
+                    await Promise.all([load(), refresh()]);
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}>删除</button>
+              </>}
+            </div>}
           </div>
           {replies === id && <Replies entryId={id} />}
         </article>;

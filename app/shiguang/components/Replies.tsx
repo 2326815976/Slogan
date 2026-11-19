@@ -49,14 +49,16 @@ export default function Replies({ entryId }: { entryId: string }) {
   }
 
   return <div className="sg-stack border-t pt-4 mt-4">
-    {items.map(reply => <div key={reply.id} className="sg-stack bg-[#FFFBF0] p-3 rounded-xl">
+    {items.map(reply => <div key={reply.id} className="sg-list-item">
       {reply.content && <p className="sg-text">{reply.content}</p>}
       <MessageMedia {...reply} />
-      <p className="sg-muted">{summary.space.members.find(member => member.userId === reply.createdBy)?.name} · {displayTime(reply.createdAt)}</p>
-      {reply.createdBy === summary.userId && <div className="sg-actions">
-        <button className="sg-link" disabled={busy || uploading} onClick={() => edit(reply)}>编辑回复</button>
-        <button className="sg-link sg-danger" disabled={busy || uploading} onClick={() => void remove(reply)}>删除</button>
-      </div>}
+      <div className="sg-list-footer">
+        <p className="sg-list-meta">{summary.space.members.find(member => member.userId === reply.createdBy)?.name || '空间成员'} · {displayTime(reply.createdAt)}</p>
+        {reply.createdBy === summary.userId && <div className="sg-list-actions">
+          <button className="sg-link sg-list-action" disabled={busy || uploading} onClick={() => edit(reply)}>编辑</button>
+          <button className="sg-link sg-list-action sg-danger" disabled={busy || uploading} onClick={() => void remove(reply)}>删除</button>
+        </div>}
+      </div>
     </div>)}
     {more && <button className="sg-link" onClick={() => void load(page + 1).catch(e => setError(e.message))}>更多回复</button>}
     <form className="sg-form" onSubmit={event => { event.preventDefault(); void save(); }}>
