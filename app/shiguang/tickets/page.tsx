@@ -184,7 +184,7 @@ export default function Page() {
         {ticket.usedAt && <p>使用：{displayTime(ticket.usedAt)}</p>}
       </div>}
       {(canEdit || canRedeem) && <div className="sg-list-actions">
-        {canEdit && resource !== 'tickets' && <button type="button" className="sg-link sg-list-action" disabled={busy} onClick={() => openForm(resource, item)}>编辑</button>}
+        {canEdit && <button type="button" className="sg-link sg-list-action" disabled={busy} onClick={() => openForm(resource, item)}>编辑</button>}
         {canEdit && resource === 'gift-cards' && <button type="button" className="sg-link sg-list-action sg-list-action--accent" disabled={busy} onClick={() => {
           if (confirm(`确认把「${item.name}」送给 ${partner.name}？送出后不可编辑或删除。`)) void action('send-card', { cardId: item.id, version: item.version });
         }}>赠送给对方</button>}
