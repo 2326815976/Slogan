@@ -4,6 +4,7 @@ import { ACTIVE_SPACE_SQL } from './access';
 import { rows, timestamp, type Row } from './db';
 import { beijingDate, canManageEntry, date, entryKind, entryPayload, integer, messageContent, object, ShiguangError, uuid } from './validation';
 import type { Entry, EntryPayload, Reply } from './types';
+import { cleanTopic } from './topics';
 
 const SORT_ORDER_SQL = "CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.sortOrder')) AS UNSIGNED)";
 const CREATED_ORDER_SQL = 'created_at DESC,id DESC';
@@ -22,8 +23,11 @@ function toReply(row: Row): Reply {
     createdBy: String(row.created_by), createdAt: timestamp(row.created_at), version: Number(row.version) };
 }
 export async function validateMemberMedia(space: string, user: string, payload: EntryPayload) {
-  for (const type of ['image', 'audio', 'video'] as const) {
-    const ref = payload[type];
+  const requested = [
+    ...(['image', 'audio', 'video'] as const).map(type => ({ type, ref: payload[type] })),
+    ...(payload.media || []).map(item => ({ type: item.type, ref: item.reference })),
+  ];
+  for (const { type, ref } of requested) {
     if (!ref) continue;
     const mediaId = ref.split('/').pop();
     const result = await rows('SELECT id,mime_type FROM shiguang_media WHERE id={{id}} AND space_id={{space}} AND uploaded_by={{user}} AND purpose=\'member\'', { id: mediaId, space, user });
@@ -39,9 +43,36 @@ export async function listEntries(space: string, resource: string, url: URL) {
   const kind = entryKind(resource);
   const page = integer(url.searchParams.get('page') ?? 0, 0, 100000);
   const day = url.searchParams.get('date');
+  const author = kind === 'whisper' ? url.searchParams.get('author') : '';
+  const topic = kind === 'whisper' ? cleanTopic(url.searchParams.get('topic')) : '';
+  const keyword = kind === 'whisper' ? String(url.searchParams.get('q') || '').trim().slice(0, 100) : '';
   const order = kind === 'anniversary' ? ANNIVERSARY_ORDER_SQL : kind === 'wish' ? WISH_ORDER_SQL : CREATED_ORDER_SQL;
+  const filters: string[] = [];
+  const params: Record<string, unknown> = { space, kind };
+  if (kind === 'mood' && day) {
+    filters.push('mood_date={{day}}');
+    params.day = date(day);
+  }
+  if (kind === 'whisper') {
+    if (day) {
+      filters.push('DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))={{day}}');
+      params.day = date(day);
+    }
+    if (author) {
+      filters.push('created_by={{author}}');
+      params.author = uuid(author);
+    }
+    if (topic) {
+      filters.push("(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.title'))={{topic}} OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.content')) LIKE CONCAT('%#',{{topic}},'%'))");
+      params.topic = topic;
+    }
+    if (keyword) {
+      filters.push("(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.content')) LIKE CONCAT('%',{{keyword}},'%') OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.title')) LIKE CONCAT('%',{{keyword}},'%'))");
+      params.keyword = keyword;
+    }
+  }
   const result = await rows(`SELECT * FROM shiguang_entries WHERE space_id={{space}} AND kind={{kind}}
-    ${kind === 'mood' && day ? 'AND mood_date={{day}}' : ''} ORDER BY ${order} LIMIT 31 OFFSET ${page * 30}`, { space, kind, day: day ? date(day) : null });
+    ${filters.length ? `AND ${filters.join(' AND ')}` : ''} ORDER BY ${order} LIMIT 31 OFFSET ${page * 30}`, params);
   return { items: result.slice(0, 30).map(toEntry), hasMore: result.length > 30 };
 }
 export async function listAnniversaries(space: string): Promise<Entry[]> {

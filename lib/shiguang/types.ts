@@ -4,6 +4,10 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   anniversary: '纪念日', wish: '许愿池', promise: '心约', whisper: '絮语', mood: '心情', collection: '拾物采集',
 };
 export const SHARED_KINDS: readonly EntryKind[] = ['anniversary', 'wish', 'promise'];
+export interface EntryMedia {
+  type: 'image' | 'video';
+  reference: string;
+}
 export interface EntryPayload {
   name?: string;
   title?: string;
@@ -18,6 +22,7 @@ export interface EntryPayload {
   description?: string;
   image?: string;
   video?: string;
+  media?: EntryMedia[];
   location?: string;
   width?: number;
   height?: number;

@@ -1,4 +1,5 @@
-import { ENTRY_KINDS, SHARED_KINDS, type Entry, type EntryKind, type EntryPayload } from './types';
+import { ENTRY_KINDS, SHARED_KINDS, type Entry, type EntryKind, type EntryMedia, type EntryPayload } from './types';
+import { firstTopic } from './topics';
 
 export class ShiguangError extends Error {
   constructor(message: string, public status = 400) { super(message); this.name = 'ShiguangError'; }
@@ -38,6 +39,21 @@ export function mediaReference(value: unknown, required = false): string {
   if (result && !/^\/api\/shiguang\/media\/[0-9a-f-]{36}$/.test(result)) throw new ShiguangError('请先上传空间图片或录音');
   return result;
 }
+export function mediaItems(value: unknown): EntryMedia[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new ShiguangError('媒体列表格式错误');
+  if (value.length > 3) throw new ShiguangError('最多添加 3 个图片或视频');
+  const seen = new Set<string>();
+  return value.flatMap(raw => {
+    const item = object(raw);
+    if (item.type !== 'image' && item.type !== 'video') throw new ShiguangError('媒体类型错误');
+    const reference = mediaReference(item.reference, true);
+    const key = `${item.type}:${reference}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ type: item.type, reference }];
+  });
+}
 export function messageContent(input: Record<string, unknown>, label: string, max: number) {
   const content = text(input.content, label, max, false);
   const audio = mediaReference(input.audio);
@@ -58,8 +74,16 @@ export function entryPayload(kind: EntryKind, input: unknown): EntryPayload {
         sortOrder: p.sortOrder == null || p.sortOrder === '' ? undefined : integer(p.sortOrder, 0, 99999) };
     case 'promise': return { title: text(p.title, '标题', 100), content: text(p.content, '内容', 10000) };
     case 'whisper': {
-      const message = messageContent(p.type === 'text' && !('image' in p) ? { ...p, audio: '' } : p, '正文', 10000);
-      return { title: text(p.title, '标题', 100, false), type: message.audio ? 'audio' : 'text', ...message };
+      if (p.media != null && !Array.isArray(p.media)) throw new ShiguangError('媒体列表格式错误');
+      const content = text(p.content, '正文', 10000, false);
+      const audio = mediaReference(p.audio);
+      const media = mediaItems([
+        ...(Array.isArray(p.media) ? p.media : []),
+        ...(p.image ? [{ type: 'image', reference: p.image }] : []),
+        ...(p.video ? [{ type: 'video', reference: p.video }] : []),
+      ]);
+      if (!content && !audio && !media.length) throw new ShiguangError('请输入文字或添加附件');
+      return { title: firstTopic(content), type: audio ? 'audio' : 'text', content, audio, ...(media.length ? { media } : {}) };
     }
     case 'mood': return { mood: text(p.mood, '心情', 30), description: text(p.description, '描述', 1000, false) };
     case 'collection': return { name: text(p.name, '名称', 100), image: mediaReference(p.image, true), location: text(p.location, '地点', 200, false), content: text(p.content, '内容', 10000, false), width: integer(p.width ?? 1, 1, 20000), height: integer(p.height ?? 1, 1, 20000) };

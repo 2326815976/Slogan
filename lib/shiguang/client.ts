@@ -27,3 +27,8 @@ export async function uploadSpaceMedia(file: Blob, admin = false, filename = 're
 export function displayTime(value: string) {
   return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 }
+export function displayMinute(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
+}

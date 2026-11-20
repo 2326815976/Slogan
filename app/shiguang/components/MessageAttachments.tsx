@@ -1,7 +1,20 @@
 'use client';
 
+import {
+  AudioLines,
+  Camera,
+  ChevronDown,
+  Image as ImageIcon,
+  LoaderCircle,
+  Music2,
+  Trash2,
+  Upload,
+  Video,
+  X,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { uploadSpaceMedia } from '@/lib/shiguang/client';
+import AudioPlayer from './AudioPlayer';
 import AudioRecorder from './AudioRecorder';
 import MessageMedia from './MessageMedia';
 
@@ -12,11 +25,12 @@ const attachmentTypes = [
   { field: 'audio', label: '音频', accept: '.mp3,.m4a,.aac,.wav' },
 ] as const;
 
-export default function MessageAttachments({ value, disabled, onChange, onBusy }: {
+export default function MessageAttachments({ value, disabled, onChange, onBusy, quick = false }: {
   value: Attachments;
   disabled: boolean;
   onChange: (field: keyof Attachments, reference: string) => void;
   onBusy: (busy: boolean) => void;
+  quick?: boolean;
 }) {
   const [audioBusy, setAudioBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -26,6 +40,7 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy }
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<{ name: string; preview?: string; failed?: boolean }>();
   const camera = useRef<HTMLVideoElement>(null);
+  const mixedMedia = useRef<HTMLInputElement>(null);
   const nativeVideo = useRef<HTMLInputElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -80,6 +95,19 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy }
       setError((error as Error).message);
     }
     finally { setUploading(false); onBusy(false); }
+  }
+
+  function selectMixedFile(file?: File) {
+    if (!file) return;
+    if (file.type.startsWith('image/')) {
+      void uploadFile('image', file);
+      return;
+    }
+    if (file.type.startsWith('video/')) {
+      void uploadFile('video', file);
+      return;
+    }
+    setError('请选择图片或视频');
   }
 
   function capturePhoto() {
@@ -142,43 +170,211 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy }
   }
 
   const locked = disabled || audioBusy || uploading || !!cameraMode;
-  return <fieldset className="sg-media-composer">
-    <legend>附件（选填）</legend>
-    <button type="button" className="sg-media-upload" disabled={locked} aria-expanded={uploadOpen} onClick={() => setUploadOpen(open => !open)}>
-      <span>上传附件</span><small>图片 · 视频 · 音频</small><span className={`sg-media-chevron${uploadOpen ? ' sg-media-chevron--open' : ''}`} aria-hidden="true" />
-    </button>
-    {uploadOpen && <div className="sg-media-tools">
-      {attachmentTypes.map(({ field, label, accept }) => <label key={field} className="sg-media-tool sg-media-file">
-        {value[field] ? `更换${label}` : label}
-        <input type="file" accept={accept} disabled={locked} onChange={event => {
+  if (quick) {
+    return <fieldset className="whisper-quick-attachments" aria-label="添加附件">
+      <div className="whisper-quick-attachments__actions">
+        <button type="button" className="sg-media-action sg-media-action--upload" disabled={locked} onClick={() => mixedMedia.current?.click()}>
+          <span className="sg-media-action__icon"><ImageIcon /></span>
+          <span className="sg-media-action__label">图片 / 视频</span>
+        </button>
+        <AudioRecorder
+          disabled={disabled || uploading || !!cameraMode}
+          onChange={audio => onChange('audio', audio)}
+          onError={setError}
+          onBusy={busy => { setAudioBusy(busy); onBusy(busy); }}
+        />
+        <label className="sg-media-action sg-media-action--audio">
+          <span className="sg-media-action__icon"><Music2 /></span>
+          <span className="sg-media-action__label">音频文件</span>
+          <input type="file" accept=".mp3,.m4a,.aac,.wav" disabled={locked}
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void uploadFile('audio', file);
+            }} />
+        </label>
+      </div>
+      <input ref={mixedMedia} type="file" accept="image/*,video/*" hidden
+        onChange={event => {
           const file = event.target.files?.[0];
           event.target.value = '';
-          if (file) void uploadFile(field, file);
+          selectMixedFile(file);
         }} />
-      </label>)}
-    </div>}
-    {selected && <div className="sg-media-item" role="status">
-      {selected.preview && <img className="sg-media-thumbnail shrink-0" src={selected.preview} alt="" />}
-      <span className="min-w-0 flex-1 truncate" title={selected.name}>{selected.name}</span>
-      <span className="sg-muted shrink-0">{selected.failed ? '上传失败，未添加' : '正在上传…'}</span>
-      {selected.failed && <button type="button" className="sg-media-remove" disabled={locked} onClick={() => { setSelected(undefined); setError(''); }}>移除</button>}
-    </div>}
-    <div className="sg-media-tools">
-      <AudioRecorder disabled={disabled || uploading || !!cameraMode} onChange={audio => onChange('audio', audio)} onError={setError} onBusy={busy => {
-        if (busy) setUploadOpen(false);
-        setAudioBusy(busy);
-        onBusy(busy);
-      }} />
-      <button type="button" className="sg-media-tool" disabled={locked} onClick={() => openCamera('image')}>拍照</button>
-      <button type="button" className="sg-media-tool" disabled={locked} onClick={() => openCamera('video')}>录像</button>
+
+      <div className="sg-media-selected-list">
+        {selected && <div className={`sg-media-selected sg-media-selected--pending${selected.failed ? ' sg-media-selected--failed' : ''}`} role="status">
+          <span className="sg-media-selected__visual">
+            {selected.preview ? <img src={selected.preview} alt="" /> : selected.failed ? <Upload /> : <LoaderCircle />}
+          </span>
+          <span className="sg-media-selected__copy">
+            <strong>{selected.failed ? '上传未完成' : '正在上传'}</strong>
+            <small title={selected.name}>{selected.name}</small>
+          </span>
+          {selected.failed
+            ? <button type="button" className="sg-media-icon-button sg-media-icon-button--danger" disabled={locked} aria-label="移除失败的附件" onClick={() => { setSelected(undefined); setError(''); }}><Trash2 /></button>
+            : <span className="sg-media-selected__status" aria-label="正在上传"><LoaderCircle /></span>}
+        </div>}
+
+        {value.image && <div className="sg-media-selected">
+          <a className="sg-media-selected__main" href={value.image} target="_blank" rel="noreferrer" aria-label="查看原图">
+            <span className="sg-media-selected__visual">
+              <img src={`${value.image}?variant=preview`} alt="" />
+            </span>
+            <span className="sg-media-selected__copy">
+              <strong>图片附件</strong>
+              <small>点击预览</small>
+            </span>
+          </a>
+          <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除图片" onClick={() => onChange('image', '')}><Trash2 /></button>
+        </div>}
+
+        {value.video && <div className="sg-media-selected sg-media-selected--expandable">
+          <details className="sg-media-selected__details">
+            <summary>
+              <span className="sg-media-selected__visual sg-media-selected__visual--video"><Video /></span>
+              <span className="sg-media-selected__copy">
+                <strong>视频附件</strong>
+                <small>点击展开播放</small>
+              </span>
+              <ChevronDown className="sg-media-selected__trailing sg-media-selected__chevron" aria-hidden="true" />
+            </summary>
+            <div className="sg-media-selected__preview"><MessageMedia video={value.video} /></div>
+          </details>
+          <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除视频" onClick={() => onChange('video', '')}><Trash2 /></button>
+        </div>}
+
+        {value.audio && <div className="sg-media-selected sg-media-selected--audio">
+          <div className="sg-media-selected__audio-head">
+            <span className="sg-media-selected__visual sg-media-selected__visual--audio"><AudioLines /></span>
+            <span className="sg-media-selected__copy">
+              <strong>音频附件</strong>
+              <small>点击播放</small>
+            </span>
+          </div>
+          <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除音频" onClick={() => onChange('audio', '')}><Trash2 /></button>
+          <div className="sg-media-selected__player"><AudioPlayer src={value.audio} /></div>
+        </div>}
+      </div>
+      {error && <p role="alert" className="sg-error">{error}</p>}
+    </fieldset>;
+  }
+
+  return <fieldset className={`sg-media-composer${quick ? ' sg-media-composer--quick' : ' sg-media-composer--editor'}`} aria-label="添加附件">
+    <div className="sg-media-action-grid">
+      <button
+        type="button"
+        className={`sg-media-action sg-media-action--upload${uploadOpen ? ' sg-media-action--active' : ''}`}
+        disabled={locked}
+        aria-expanded={uploadOpen}
+        onClick={() => setUploadOpen(open => !open)}
+      >
+        <span className="sg-media-action__icon"><Upload /></span>
+        <span className="sg-media-action__label">上传附件</span>
+      </button>
+      <AudioRecorder
+        disabled={disabled || uploading || !!cameraMode}
+        onChange={audio => onChange('audio', audio)}
+        onError={setError}
+        onBusy={busy => {
+          if (busy) setUploadOpen(false);
+          setAudioBusy(busy);
+          onBusy(busy);
+        }}
+      />
+      <button type="button" className="sg-media-action sg-media-action--camera" disabled={locked} onClick={() => openCamera('image')}>
+        <span className="sg-media-action__icon"><Camera /></span>
+        <span className="sg-media-action__label">拍照</span>
+      </button>
+      <button type="button" className="sg-media-action sg-media-action--video" disabled={locked} onClick={() => openCamera('video')}>
+        <span className="sg-media-action__icon"><Video /></span>
+        <span className="sg-media-action__label">录像</span>
+      </button>
     </div>
-    {cameraMode && <div className="sg-media-composer">
-      <video ref={camera} autoPlay muted playsInline aria-label="相机画面" className="max-h-64 max-w-full rounded-xl" />
-      <div className="sg-actions">
+
+    {uploadOpen && <div className="sg-media-file-picker" role="group" aria-label="选择附件类型">
+      {attachmentTypes.map(({ field, label, accept }) => {
+        const TypeIcon = field === 'image' ? ImageIcon : field === 'video' ? Video : Music2;
+        return <label key={field} className={`sg-media-file-choice sg-media-file-choice--${field}`}>
+          <TypeIcon aria-hidden="true" />
+          <span>{value[field] ? `更换${label}` : `选择${label}`}</span>
+          <input type="file" accept={accept} disabled={locked} onChange={event => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void uploadFile(field, file);
+          }} />
+        </label>;
+      })}
+    </div>}
+
+    <div className="sg-media-selected-list">
+      {selected && <div className={`sg-media-selected sg-media-selected--pending${selected.failed ? ' sg-media-selected--failed' : ''}`} role="status">
+        <span className="sg-media-selected__visual">
+          {selected.preview ? <img src={selected.preview} alt="" /> : selected.failed ? <Upload /> : <LoaderCircle />}
+        </span>
+        <span className="sg-media-selected__copy">
+          <strong>{selected.failed ? '上传未完成' : '正在上传'}</strong>
+          <small title={selected.name}>{selected.name}</small>
+        </span>
+        {selected.failed
+          ? <button type="button" className="sg-media-icon-button sg-media-icon-button--danger" disabled={locked} aria-label="移除失败的附件" onClick={() => { setSelected(undefined); setError(''); }}><Trash2 /></button>
+          : <span className="sg-media-selected__status" aria-label="正在上传"><LoaderCircle /></span>}
+      </div>}
+
+      {value.image && <div className="sg-media-selected">
+        <a className="sg-media-selected__main" href={value.image} target="_blank" rel="noreferrer" aria-label="查看原图">
+          <span className="sg-media-selected__visual">
+            <img src={`${value.image}?variant=preview`} alt="" onError={event => {
+              const image = event.currentTarget;
+              if (value.image && image.getAttribute('src') !== value.image) image.src = value.image;
+            }} />
+          </span>
+          <span className="sg-media-selected__copy">
+            <strong>图片附件</strong>
+            <small>点击预览</small>
+          </span>
+        </a>
+        <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除图片" onClick={() => onChange('image', '')}><Trash2 /></button>
+      </div>}
+
+      {value.video && <div className="sg-media-selected sg-media-selected--expandable">
+        <details className="sg-media-selected__details">
+          <summary>
+            <span className="sg-media-selected__visual sg-media-selected__visual--video"><Video /></span>
+            <span className="sg-media-selected__copy">
+              <strong>视频附件</strong>
+              <small>点击展开播放</small>
+            </span>
+            <ChevronDown className="sg-media-selected__trailing sg-media-selected__chevron" aria-hidden="true" />
+          </summary>
+          <div className="sg-media-selected__preview"><MessageMedia video={value.video} /></div>
+        </details>
+        <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除视频" onClick={() => onChange('video', '')}><Trash2 /></button>
+      </div>}
+
+      {value.audio && <div className="sg-media-selected sg-media-selected--audio">
+        <div className="sg-media-selected__audio-head">
+          <span className="sg-media-selected__visual sg-media-selected__visual--audio"><AudioLines /></span>
+          <span className="sg-media-selected__copy">
+            <strong>音频附件</strong>
+            <small>点击播放</small>
+          </span>
+        </div>
+        <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除音频" onClick={() => onChange('audio', '')}><Trash2 /></button>
+        <div className="sg-media-selected__player"><AudioPlayer src={value.audio} /></div>
+      </div>}
+    </div>
+
+    {cameraMode && <div className="sg-media-camera">
+      <div className="sg-media-camera__head">
+        <span><Camera aria-hidden="true" />{cameraMode === 'image' ? '拍照' : '录像'}</span>
+        <button type="button" aria-label={recording ? '取消录像' : '关闭相机'} onClick={closeCamera}><X /></button>
+      </div>
+      <video ref={camera} autoPlay muted playsInline aria-label="相机画面" />
+      <div className="sg-media-camera__actions">
         <button type="button" className="sg-button" onClick={cameraMode === 'image' ? capturePhoto : recordVideo}>
-          {cameraMode === 'image' ? '拍摄' : recording ? '结束录像' : '开始录像（最多 30 秒）'}
+          {cameraMode === 'image' ? '拍摄' : recording ? '结束录像' : '开始录像'}
         </button>
-        <button type="button" className="sg-link" onClick={closeCamera}>{recording ? '取消录像' : '关闭相机'}</button>
+        <span>{cameraMode === 'video' ? '最长 30 秒' : '画面仅用于本次上传'}</span>
       </div>
     </div>}
     <input ref={nativeVideo} type="file" hidden capture="environment" accept="video/mp4,video/quicktime,.mp4,.mov" onChange={event => {
@@ -186,23 +382,6 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy }
       event.target.value = '';
       if (file) void uploadFile('video', file);
     }} />
-    {value.image && <div className="sg-media-item">
-      <a className="sg-media-preview" href={value.image} target="_blank" rel="noreferrer" aria-label="查看原图">
-        <img className="sg-media-thumbnail" src={`${value.image}?variant=preview`} alt="" onError={event => {
-          const image = event.currentTarget;
-          if (value.image && image.getAttribute('src') !== value.image) image.src = value.image;
-        }} />查看原图
-      </a>
-      <button type="button" className="sg-media-remove" disabled={locked} aria-label="移除图片" onClick={() => onChange('image', '')}>移除</button>
-    </div>}
-    {value.video && <div className="sg-media-item">
-      <details className="sg-media-video"><summary>播放视频</summary><MessageMedia video={value.video} /></details>
-      <button type="button" className="sg-media-remove" disabled={locked} aria-label="移除视频" onClick={() => onChange('video', '')}>移除</button>
-    </div>}
-    {value.audio && <div className="sg-media-item">
-      <audio controls preload="none" src={value.audio} aria-label="音频附件" />
-      <button type="button" className="sg-media-remove" disabled={locked} aria-label="移除音频" onClick={() => onChange('audio', '')}>移除</button>
-    </div>}
     {error && <p role="alert" className="sg-error">{error}</p>}
   </fieldset>;
 }
