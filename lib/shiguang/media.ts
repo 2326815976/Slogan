@@ -6,6 +6,7 @@ import { executeSQL } from '@/lib/cloudbase/sql-executor';
 import { activeMembership, requireMember, requireUser } from './access';
 import { rows, type Row } from './db';
 import { ShiguangError, uuid } from './validation';
+import { playableRecording } from './audio-compat';
 import type { AuthUser } from '@/lib/auth/types';
 import { WALL_PREVIEW_MAX_WIDTH, WALL_PREVIEW_QUALITY } from '@/lib/gallery/wall-image-config';
 
@@ -85,7 +86,7 @@ export async function uploadMedia(request: Request) {
   }
   const maxSize = IMAGE_TYPES.has(type) ? 8 * 1024 * 1024 : 15 * 1024 * 1024;
   if (file.size === 0 || file.size > maxSize) throw new ShiguangError(`文件大小应在 1 字节至 ${maxSize / 1024 / 1024}MB 之间`);
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const { content: buffer, mime: storedType } = await playableRecording(Buffer.from(await file.arrayBuffer()), type);
   if (isImage) {
     const sharp = (await import('sharp')).default;
     const metadata = await sharp(buffer, { limitInputPixels: 40000000 }).metadata();
@@ -108,7 +109,7 @@ export async function uploadMedia(request: Request) {
   // 管理员上传封面时尚未绑定空间，避免 SDK 将 null 写成字符串。
   await executeSQL(`INSERT INTO shiguang_media(id,space_id,uploaded_by,purpose,mime_type,file_id,byte_length,created_at${previewId ? ',preview_file_id' : ''})
     VALUES({{id}},${membership ? '{{space}}' : 'NULL'},{{user}},{{purpose}},{{type}},{{file}},{{size}},UTC_TIMESTAMP(3)${previewId ? ',{{previewId}}' : ''})`,
-  { id, space: membership?.spaceId || null, user: user.id, purpose: admin ? 'admin' : 'member', type, file: originalId, size: buffer.length, previewId });
+  { id, space: membership?.spaceId || null, user: user.id, purpose: admin ? 'admin' : 'member', type: storedType, file: originalId, size: buffer.length, previewId });
   return { reference: `/api/shiguang/media/${id}` };
 }
 export async function memberMediaLinks(request: Request, ids: string[]) {

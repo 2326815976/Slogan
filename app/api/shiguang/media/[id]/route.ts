@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { publicError } from '@/lib/shiguang/db';
 import { requireUser } from '@/lib/shiguang/access';
+import { playableRecording } from '@/lib/shiguang/audio-compat';
 import { downloadImagePreview, downloadMedia, mediaRecord } from '@/lib/shiguang/media';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -10,8 +11,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const { id } = await context.params, record = await mediaRecord(id, user);
     const query = new URL(request.url).searchParams;
     const isPreview = query.get('variant') === 'preview';
-    const content = await (isPreview ? downloadImagePreview(record) : downloadMedia(record));
-    const headers = { 'Content-Type': isPreview ? 'image/webp' : String(record.mime_type), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
+    const { content, mime } = isPreview
+      ? { content: await downloadImagePreview(record), mime: 'image/webp' }
+      : await playableRecording(await downloadMedia(record), String(record.mime_type), String(record.file_id));
+    const headers = { 'Content-Type': mime, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
     if (query.get('view') === 'avatar') {
       if (!headers['Content-Type'].startsWith('image/')) {
         return NextResponse.json({ error: '头像必须是图片' }, { status: 415, headers: { 'Cache-Control': 'private, no-store' } });
