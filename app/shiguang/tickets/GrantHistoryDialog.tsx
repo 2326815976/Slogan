@@ -34,14 +34,17 @@ export default function GrantHistoryDialog({ memberName, disabled }: { memberNam
       </div>
       <div className="sg-ticket-dialog__body" aria-busy={loading}>
         {error && <p className="sg-error" role="alert">{error}</p>}
-        {!history.items.length && !error && <p className="sg-muted" role="status">{loading ? '正在加载记录…' : '还没有赠送记录'}</p>}
-        {history.items.length > 0 && <div className="sg-list-stack">
-          {history.items.map(grant => <article key={grant.id} className="sg-list-item">
-            <div className="sg-list-line"><h3 className="sg-list-title">{memberName(grant.giverId)} 赠给 {memberName(grant.receiverId)}</h3><span className="sg-list-tag">{grant.amount} 次</span></div>
-            <p className="sg-list-meta">{displayTime(grant.createdAt)}</p>
-          </article>)}
-        </div>}
-        {(history.hasMore || error) && <button type="button" className="sg-link justify-self-start" disabled={loading} onClick={() => void load(history.items.length ? history.page + 1 : 0)}>{loading ? '正在加载…' : error ? '重试' : '更多记录'}</button>}
+        {!history.items.length && !error && <p className="sg-muted grant-history-empty" role="status">{loading ? '正在加载记录…' : '还没有赠送记录'}</p>}
+        {history.items.length > 0 && <ul className="grant-history-list">
+          {history.items.map(grant => <li key={grant.id} className="grant-history-row">
+            <div>
+              <p className="grant-history-names">{memberName(grant.giverId)} 赠给 {memberName(grant.receiverId)}</p>
+              <time className="sg-list-meta" dateTime={grant.createdAt}>{displayTime(grant.createdAt)}</time>
+            </div>
+            <span className="ticket-status">{grant.amount} 次</span>
+          </li>)}
+        </ul>}
+        {(history.hasMore || error) && <button type="button" className="sg-link sg-list-action grant-history-more" disabled={loading} onClick={() => void load(history.items.length ? history.page + 1 : 0)}>{loading ? '正在加载…' : error ? '重试' : '更多记录'}</button>}
       </div>
     </dialog>
   </>;

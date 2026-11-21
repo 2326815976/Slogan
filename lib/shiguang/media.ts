@@ -19,11 +19,14 @@ const ATTACHMENT_TYPES: Record<string, string> = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
 };
 
-async function compressPreview(buffer: Buffer) {
+type ImageVariant = 'preview' | 'thumbnail';
+
+async function compressPreview(buffer: Buffer, variant: ImageVariant) {
   const sharp = (await import('sharp')).default;
+  const maxEdge = variant === 'thumbnail' ? 480 : WALL_PREVIEW_MAX_WIDTH;
   return sharp(buffer, { limitInputPixels: 40000000 }).rotate()
-    .resize(WALL_PREVIEW_MAX_WIDTH, WALL_PREVIEW_MAX_WIDTH, { fit: 'inside', withoutEnlargement: true })
-    .webp({ quality: WALL_PREVIEW_QUALITY }).toBuffer();
+    .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: variant === 'thumbnail' ? 82 : WALL_PREVIEW_QUALITY }).toBuffer();
 }
 
 async function storeMedia(path: string, buffer: Buffer) {
@@ -50,8 +53,18 @@ export function decryptMedia(encrypted: Buffer): Buffer {
 }
 async function canReadMedia(user: Pick<AuthUser, 'id' | 'role'>, row: Row) {
   const membership = await activeMembership(user.id);
-  if (row.space_id) return row.space_id === membership?.spaceId;
   const ref = `/api/shiguang/media/${row.id}`;
+  if (row.space_id) {
+    if (row.space_id !== membership?.spaceId) return false;
+    if (row.uploaded_by === user.id || !String(row.mime_type).startsWith('image/')) return true;
+    const locked = await rows(`SELECT 1 FROM shiguang_prizes prize
+      WHERE prize.space_id={{space}} AND prize.provider_id={{uploader}} AND prize.image={{ref}}
+        AND NOT EXISTS (SELECT 1 FROM shiguang_tickets ticket
+          WHERE ticket.space_id=prize.space_id AND ticket.provider_id=prize.provider_id
+            AND ticket.holder_id={{viewer}} AND ticket.image=prize.image)
+      LIMIT 1`, { space: row.space_id, uploader: row.uploaded_by, ref, viewer: user.id });
+    return locked.length === 0;
+  }
   const linked = membership ? await rows(`SELECT s.id FROM shiguang_spaces s WHERE s.id={{space}} AND
     (s.cover={{ref}} OR EXISTS(SELECT 1 FROM shiguang_members m WHERE m.space_id=s.id AND m.avatar={{ref}}))`, { space: membership.spaceId, ref }) : [];
   if (linked.length) return true;
@@ -71,6 +84,7 @@ export async function uploadMedia(request: Request) {
   const form = await request.formData();
   const admin = form.get('purpose') === 'admin';
   const attachment = !admin && form.get('attachment') === '1';
+  const variant = attachment ? 'preview' : !admin && form.get('thumbnail') === '1' ? 'thumbnail' : null;
   if (admin && user.role !== 'admin') throw new ShiguangError('需要管理员权限', 403);
   const membership = admin ? null : await requireMember(request);
   const file = form.get('file');
@@ -93,11 +107,11 @@ export async function uploadMedia(request: Request) {
     if (!['jpeg', 'png', 'webp', 'gif'].includes(metadata.format || '')) throw new ShiguangError('图片格式无效');
   }
   if (isVideo && (buffer.length < 12 || buffer.toString('ascii', 4, 8) !== 'ftyp')) throw new ShiguangError('视频格式无效');
-  const preview = attachment && isImage ? await compressPreview(buffer) : null;
+  const preview = variant && isImage ? await compressPreview(buffer, variant) : null;
   const id = randomUUID();
   const [originalUpload, previewUpload] = await Promise.allSettled([
     storeMedia(`shiguang/${id}.bin`, buffer),
-    preview ? storeMedia(`shiguang/${id}.preview.bin`, preview) : Promise.resolve(''),
+    preview ? storeMedia(`shiguang/${id}.${variant}.bin`, preview) : Promise.resolve(''),
   ]);
   if (originalUpload.status === 'rejected' || previewUpload.status === 'rejected') {
     const completed = [originalUpload, previewUpload].flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
@@ -130,9 +144,11 @@ export async function memberMediaLinks(request: Request, ids: string[]) {
 export async function downloadMedia(row: Row) {
   return downloadStoredMedia(String(row.file_id));
 }
-export async function downloadImagePreview(row: Row) {
+export async function downloadImagePreview(row: Row, variant: ImageVariant = 'preview') {
   if (!IMAGE_TYPES.has(String(row.mime_type))) throw new ShiguangError('仅图片支持预览', 415);
-  return row.preview_file_id ? downloadStoredMedia(String(row.preview_file_id)) : compressPreview(await downloadMedia(row));
+  const previewId = String(row.preview_file_id || '');
+  if (previewId && (variant === 'preview' || previewId.endsWith('.thumbnail.bin'))) return downloadStoredMedia(previewId);
+  return compressPreview(await downloadMedia(row), variant);
 }
 async function downloadStoredMedia(fileId: string) {
   const result = await getCloudBaseApp().downloadFile({ fileID: fileId }) as { fileContent: Buffer };

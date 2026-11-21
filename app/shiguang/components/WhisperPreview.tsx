@@ -1,76 +1,122 @@
-import Link from 'next/link';
+'use client';
+
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, ImageIcon, Pause, Play, X } from 'lucide-react';
-import { displayTime } from '@/lib/shiguang/client';
+import { flushSync } from 'react-dom';
+import { AudioLines, ImageIcon, Pause, Video, X } from 'lucide-react';
+import { displayMinute } from '@/lib/shiguang/client';
 import type { Entry } from '@/lib/shiguang/types';
 import styles from './HomeModules.module.css';
+import TopicText from './TopicText';
+import WhisperVideoDialog from './WhisperVideoDialog';
 
-const attachmentKinds = ['image', 'video', 'audio'] as const;
-const attachmentLabels = { image: '图片', video: '视频', audio: '音频' };
-const attachmentIcons = { image: ImageIcon, video: Play, audio: AudioLines };
+type AttachmentKind = 'image' | 'video' | 'audio';
+type Attachment = { kind: AttachmentKind; reference: string };
+const attachmentMeta = {
+  image: { label: '查看图片', Icon: ImageIcon },
+  video: { label: '播放视频', Icon: Video },
+  audio: { label: '播放音频', Icon: AudioLines },
+};
 
 export default function WhisperPreview({ entry, author }: { entry: Entry; author: string }) {
-  const { content, title, image, video, audio } = entry.payload;
-  const attachments = attachmentKinds.filter(kind => entry.payload[kind]);
-  const single = attachments.length === 1 ? attachments[0] : undefined;
+  const source = String(entry.payload.content || entry.payload.title || '').replace(/\s+/g, ' ').trim();
+  const seen = new Set<string>();
+  const media = [
+    ...(Array.isArray(entry.payload.media) ? entry.payload.media : []),
+    ...(entry.payload.image ? [{ type: 'image' as const, reference: entry.payload.image }] : []),
+    ...(entry.payload.video ? [{ type: 'video' as const, reference: entry.payload.video }] : []),
+  ].filter(item => {
+    const key = `${item.type}:${item.reference}`;
+    if (!item.reference || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 3);
+  const fallback = entry.payload.audio ? '[音频]' : media.length ? '[媒体]' : '未命名絮语';
+  const excerpt = Array.from(source || fallback);
+  const previewText = excerpt.length > 20 ? `${excerpt.slice(0, 20).join('')}...` : excerpt.join('');
+  const date = displayMinute(entry.createdAt).slice(0, 10);
   const dialog = useRef<HTMLDialogElement>(null);
-  const videoPlayer = useRef<HTMLVideoElement>(null);
   const audioPlayer = useRef<HTMLAudioElement>(null);
-  const [mediaOpen, setMediaOpen] = useState(false);
+  const audioSource = entry.payload.audio;
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment>();
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
+  const attachments: Attachment[] = [
+    ...media.map(item => ({ kind: item.type, reference: item.reference })),
+    ...(entry.payload.audio ? [{ kind: 'audio' as const, reference: entry.payload.audio }] : []),
+  ];
 
   useEffect(() => {
-    const player = audioPlayer.current ?? videoPlayer.current;
-    return () => { player?.pause(); };
-  }, [single, audio, video, mediaOpen]);
+    const player = audioPlayer.current;
+    setPlaying(false);
+    return () => player?.pause();
+  }, [audioSource]);
 
-  function openAttachment() {
+  function openAttachment(attachment: Attachment) {
     setError('');
-    if (single === 'audio') {
+    if (attachment.kind === 'audio') {
       const player = audioPlayer.current;
       if (!player) return;
       if (player.paused) {
-        void player.play().catch((reason: unknown) => {
-          if (reason instanceof DOMException && reason.name === 'AbortError') return;
-          setError('音频暂时无法播放');
-        });
-      } else player.pause();
+        void player.play().catch(() => setError('音频暂时无法播放'));
+      } else {
+        player.pause();
+      }
       return;
     }
+    audioPlayer.current?.pause();
+    if (attachment.kind === 'video') {
+      flushSync(() => setPreviewAttachment(attachment));
+      return;
+    }
+    setPreviewAttachment(attachment);
     dialog.current?.showModal();
-    setMediaOpen(true);
+  }
+
+  function closePreview() {
+    setPreviewAttachment(undefined);
+    setError('');
   }
 
   return <div className={styles.whisperPreview}>
-    <Link href="/shiguang/whisper" className={`${styles.whisperCopy} ${styles.whisperLink}`}>
-      {(content || title) && <p className={styles.whisperText}>{content || title}</p>}
-      <div className={`${styles.meta} ${styles.whisperMeta}`}>
-        <span>{author}</span><span aria-hidden="true">·</span><time dateTime={entry.createdAt}>{displayTime(entry.createdAt)}</time>
-      </div>
-      {single === 'audio' && error && <span className={styles.meta} role="status">{error}</span>}
-    </Link>
-    {attachments.length > 0 && <div className={styles.whisperMedia}>
-      {attachments.map(kind => {
-        const active = kind === 'audio' && playing;
-        const Icon = active ? Pause : attachmentIcons[kind];
-        const tile = <><Icon aria-hidden="true" />{active ? '暂停' : attachmentLabels[kind]}</>;
-        return single === kind ? <button key={kind} type="button" className={styles.attachment} data-kind={kind}
-          aria-label={kind === 'image' ? '查看原图' : active ? '暂停音频' : `播放${attachmentLabels[kind]}`} onClick={openAttachment}>
-          {tile}
-          {kind === 'image' && <img key={image} src={`${image}?variant=preview`} alt="" loading="lazy" onError={event => { event.currentTarget.hidden = true; }} />}
-        </button> : <span key={kind} className={styles.attachment} data-kind={kind}>{tile}</span>;
-      })}
-    </div>}
-    {single === 'audio' && <audio ref={audioPlayer} src={audio} preload="none" hidden
+    <div className={styles.whisperContent}>
+      <span className={styles.whisperTitleRow}>
+        <span className={styles.whisperAccent} aria-hidden="true" />
+        <TopicText className={styles.whisperTitle} content={previewText} />
+      </span>
+      <span className={styles.whisperSide}>
+        {attachments.length > 0 && <span className={styles.whisperAttachments}>
+          {attachments.map((attachment, index) => {
+            const { label, Icon: BaseIcon } = attachmentMeta[attachment.kind];
+            const active = attachment.kind === 'audio' && playing;
+            const Icon = active ? Pause : BaseIcon;
+            const actionLabel = active ? '暂停音频' : label;
+            return <button key={`${attachment.reference}-${index}`} type="button" className={styles.whisperAttachmentIcon}
+              aria-label={actionLabel} title={actionLabel}
+              onClick={event => { event.preventDefault(); event.stopPropagation(); openAttachment(attachment); }}>
+              <Icon aria-hidden="true" />
+            </button>;
+          })}
+        </span>}
+        <span className={styles.whisperMeta}>
+          <span className={styles.whisperAuthor}>{author}</span>
+          {date && <>
+            <span className={styles.whisperDivider} aria-hidden="true">·</span>
+            <time dateTime={entry.createdAt}>{date}</time>
+          </>}
+        </span>
+      </span>
+    </div>
+    {error && <span className={styles.whisperError} role="status">{error}</span>}
+    {audioSource && <audio key={audioSource} ref={audioPlayer} src={audioSource} preload="none" hidden
       onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
       onError={() => { setPlaying(false); setError('音频暂时无法播放'); }} />}
-    {(single === 'image' || single === 'video') && <dialog ref={dialog} className={styles.mediaDialog}
-      aria-label={single === 'image' ? '查看原图' : '播放视频'} onClose={() => { videoPlayer.current?.pause(); setMediaOpen(false); }}>
-      <button type="button" className={styles.closeMedia} aria-label="关闭" onClick={() => dialog.current?.close()}><X aria-hidden="true" /></button>
-      {mediaOpen && (error ? <p role="status">{error}</p> : single === 'image'
-        ? <img src={image} alt="絮语原图" onError={() => setError('原图暂时无法打开')} />
-        : <video ref={videoPlayer} src={video} controls autoPlay playsInline onError={() => setError('视频暂时无法播放')} />)}
-    </dialog>}
+    {previewAttachment?.kind === 'video' && <WhisperVideoDialog src={previewAttachment.reference} onClose={closePreview} />}
+    <dialog ref={dialog} className={styles.mediaDialog} aria-label="查看图片" onClose={closePreview}>
+      <button type="button" className={styles.closeMedia} aria-label="关闭" onClick={() => dialog.current?.close()}>
+        <X aria-hidden="true" />
+      </button>
+      {previewAttachment?.kind === 'image' && <img src={previewAttachment.reference} alt="絮语图片" onError={() => setError('图片暂时无法打开')} />}
+      {error && <p role="status">{error}</p>}
+    </dialog>
   </div>;
 }

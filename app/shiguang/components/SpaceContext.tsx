@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { useRouter } from 'next/navigation';
 import { spaceRequest, SpaceRequestError } from '@/lib/shiguang/client';
 import type { ShiguangSummary } from '@/lib/shiguang/types';
+import ShiguangLoading from './ShiguangLoading';
 
 const Context = createContext<{ summary: ShiguangSummary; refresh: () => Promise<void> } | null>(null);
 export function useSpace() {
@@ -32,6 +33,8 @@ export default function SpaceContext({ children }: { children: React.ReactNode }
     document.addEventListener('visibilitychange', onVisible);
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [refresh]);
-  if (!summary) return <div className="p-8 text-center" role="status">{error || '正在打开我们的拾光…'}{error && <button onClick={() => void refresh()} className="sg-button">重试</button>}</div>;
+  if (!summary) return error
+    ? <div className="p-8 text-center" role="alert">{error}<button onClick={() => void refresh()} className="sg-button">重试</button></div>
+    : <ShiguangLoading description="正在打开我们的拾光" className="min-h-[60vh]" />;
   return <Context.Provider value={{ summary, refresh }}>{error && <p role="alert" className="sg-error">{error}</p>}{children}</Context.Provider>;
 }

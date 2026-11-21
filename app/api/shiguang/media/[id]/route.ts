@@ -10,9 +10,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const user = await requireUser(request);
     const { id } = await context.params, record = await mediaRecord(id, user);
     const query = new URL(request.url).searchParams;
-    const isPreview = query.get('variant') === 'preview';
-    const { content, mime } = isPreview
-      ? { content: await downloadImagePreview(record), mime: 'image/webp' }
+    const variant = query.get('variant');
+    const { content, mime } = variant === 'preview' || variant === 'thumbnail'
+      ? { content: await downloadImagePreview(record, variant), mime: 'image/webp' }
       : await playableRecording(await downloadMedia(record), String(record.mime_type), String(record.file_id));
     const headers = { 'Content-Type': mime, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
     if (query.get('view') === 'avatar') {

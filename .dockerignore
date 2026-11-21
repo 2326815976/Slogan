@@ -5,6 +5,9 @@
 .codex-run
 backup
 tests
+Slogan_Backup
+Slogan_Test
+NUL
 .serena
 .spec-workflow
 coverage

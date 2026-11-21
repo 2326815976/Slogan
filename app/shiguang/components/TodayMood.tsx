@@ -77,7 +77,7 @@ export default function TodayMood() {
       </div>
       {expanded && <form className="sg-form sg-mood-form" onSubmit={event => { event.preventDefault(); void save(name, description); }}>
         <label>心情<input required maxLength={30} value={name} disabled={saving} onChange={event => setName(event.target.value)} /></label>
-        <label>感受（选填）<textarea maxLength={1000} value={description} disabled={saving} onChange={event => setDescription(event.target.value)} /></label>
+        <label>描述（选填）<textarea maxLength={1000} value={description} disabled={saving} onChange={event => setDescription(event.target.value)} /></label>
         <button className="sg-button" disabled={saving}>保存心情</button>
       </form>}
       {saving && <p className="sg-muted" role="status">正在保存…</p>}

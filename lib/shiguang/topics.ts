@@ -6,7 +6,7 @@ export function cleanTopic(value: unknown): string {
   return String(value ?? '').trim().replace(/#+/g, '').replace(/[\s%_\\]+/g, '').slice(0, 30);
 }
 
-export function topicSegments(content: unknown): TopicSegment[] {
+export function topicSegments(content: unknown, preserveSource = false): TopicSegment[] {
   const source = String(content ?? '');
   if (!source) return [];
   const segments: TopicSegment[] = [];
@@ -16,7 +16,7 @@ export function topicSegments(content: unknown): TopicSegment[] {
     const topic = cleanTopic(match[1]);
     if (!topic) continue;
     if (index > cursor) segments.push({ text: source.slice(cursor, index) });
-    segments.push({ text: `#${topic}`, topic });
+    segments.push({ text: preserveSource ? match[0] : `#${topic}`, topic });
     cursor = index + match[0].length;
   }
   if (cursor < source.length) segments.push({ text: source.slice(cursor) });

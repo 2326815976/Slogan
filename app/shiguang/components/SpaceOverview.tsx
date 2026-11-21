@@ -2,26 +2,16 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { CalendarDays, CalendarHeart, Heart, LockKeyhole } from 'lucide-react';
+import { LockKeyhole } from 'lucide-react';
 import { createClient } from '@/lib/cloudbase/client';
 import { spaceRequest } from '@/lib/shiguang/client';
-import { anniversaryDays } from '@/lib/shiguang/validation';
+import AnniversaryCardContent, { OverviewFooter } from './AnniversaryCardContent';
 import { useSpace } from './SpaceContext';
 
 interface OverviewPhoto {
   id: string;
   thumbnail_url: string;
   shot_date: string | null;
-}
-
-function OverviewFooter({ date }: { date?: string | null }) {
-  return <span className="sg-overview-footer">
-    {date && <time className="sg-overview-date" dateTime={date}>
-      <CalendarDays aria-hidden="true" />
-      {date.replace(/-/g, '.')}
-    </time>}
-    <span className="sg-overview-entry">点击进入 <span aria-hidden="true">›</span></span>
-  </span>;
 }
 
 export default function SpaceOverview({ onOpenAlbum }: { onOpenAlbum: () => Promise<void> }) {
@@ -62,10 +52,7 @@ export default function SpaceOverview({ onOpenAlbum }: { onOpenAlbum: () => Prom
 
   const photo = photos[position % Math.max(1, photos.length)];
   const anniversary = anniversaries[position % Math.max(1, anniversaries.length)]?.payload;
-  const date = anniversary?.date;
-  const elapsed = date ? anniversaryDays({ date }, summary.today) : NaN;
-  const days = Math.abs(elapsed);
-  const caption = elapsed === 0 ? '就是今天' : elapsed < 0 ? '还有' : anniversary?.direction === 'down' ? '已过去' : '已走过';
+  const isCountdown = anniversary?.direction === 'down';
   const albumTitle = summary.album?.title || '空间相册';
 
   return <div className="sg-overview">
@@ -76,21 +63,8 @@ export default function SpaceOverview({ onOpenAlbum }: { onOpenAlbum: () => Prom
       {!photo && <LockKeyhole className="sg-overview-placeholder" aria-hidden="true" />}
       <OverviewFooter date={photo?.shot_date} />
     </button>
-    <Link href="/shiguang/anniversary" className="sg-overview-card sg-overview-card--anniversary" aria-label="进入纪念日和倒数日管理">
-      <span className="sg-overview-flourish" aria-hidden="true"><Heart /></span>
-      <span className="sg-overview-heading sg-overview-heading--anniversary">
-        <span className="sg-overview-heading-decoration" aria-hidden="true">♥</span>
-        <span className="sg-overview-heading-text">{anniversary?.name || '纪念日'}</span>
-        <span className="sg-overview-heading-decoration" aria-hidden="true">♥</span>
-      </span>
-      {Number.isFinite(days) ? <span className="sg-overview-count">
-        <span className="sg-overview-count-caption">{caption}</span>
-        <span className={`sg-overview-value${days < 100 ? ' sg-overview-value--accent' : ''}`}>
-          <strong className={days >= 100000 ? 'sg-overview-number--compact' : days >= 1000 ? 'sg-overview-number--wide' : undefined}>{days}</strong>
-          <span className="sg-overview-unit">天</span>
-        </span>
-      </span> : <CalendarHeart className="sg-overview-placeholder" aria-hidden="true" />}
-      <OverviewFooter date={date} />
+    <Link href="/shiguang/anniversary" className={`sg-overview-card sg-overview-card--anniversary${isCountdown ? ' sg-overview-card--countdown' : ''}`} aria-label="进入纪念日和倒数日管理">
+      <AnniversaryCardContent payload={anniversary} today={summary.today} />
     </Link>
   </div>;
 }

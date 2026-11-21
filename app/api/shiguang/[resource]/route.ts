@@ -11,10 +11,18 @@ export async function GET(request: Request, context: Context) {
   return respond(async () => {
     const { resource } = await context.params, access = await requireMember(request), url = new URL(request.url);
     if (resource === 'album') return albumLink(access.spaceId);
-    if (resource === 'prizes') return listPrizes(access.spaceId);
+    if (resource === 'prizes') return listPrizes(access.spaceId, access.user.id);
     if (resource === 'gift-cards') return listGiftCards(access.spaceId);
-    if (resource === 'tickets' || resource === 'grants') return listTicketHistory(access.spaceId, resource, Number(url.searchParams.get('page') || 0));
-    if (resource === 'replies') return listReplies(access.spaceId, url.searchParams.get('entryId') || '', Number(url.searchParams.get('page') || 0));
+    if (resource === 'tickets' || resource === 'grants') {
+      const page = Number(url.searchParams.get('page') || 0);
+      const scope = resource === 'tickets' ? url.searchParams.get('scope') ?? 'all' : 'all';
+      return listTicketHistory(access.spaceId, resource, page, access.user.id, scope);
+    }
+    if (resource === 'replies') {
+      const page = Number(url.searchParams.get('page') ?? 0);
+      const pageSize = url.searchParams.get('pageSize');
+      return listReplies(access.spaceId, url.searchParams.get('entryId') || '', page, pageSize === null ? undefined : Number(pageSize));
+    }
     return listEntries(access.spaceId, resource, url);
   });
 }

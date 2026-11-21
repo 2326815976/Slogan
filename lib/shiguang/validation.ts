@@ -62,6 +62,12 @@ export function messageContent(input: Record<string, unknown>, label: string, ma
   if (!content && !audio && !image && !video) throw new ShiguangError('请输入文字或添加附件');
   return { content, audio, image, video };
 }
+export function replyContent(input: Record<string, unknown>) {
+  const message = messageContent(input, '回复', 2000);
+  const attachments = [message.image, message.video, message.audio].filter(Boolean);
+  if (attachments.length > 1) throw new ShiguangError('每条评论仅可添加一张图片、一段视频或一条语音');
+  return message;
+}
 export function entryPayload(kind: EntryKind, input: unknown): EntryPayload {
   const p = object(input);
   switch (kind) {

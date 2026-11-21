@@ -6,17 +6,20 @@ import {
   ChevronDown,
   Image as ImageIcon,
   LoaderCircle,
+  Mic,
   Music2,
+  Plus,
   Trash2,
   Upload,
   Video,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { uploadSpaceMedia } from '@/lib/shiguang/client';
 import AudioPlayer from './AudioPlayer';
 import AudioRecorder from './AudioRecorder';
 import MessageMedia from './MessageMedia';
+import WhisperAudioBar from './WhisperAudioBar';
 
 type Attachments = { audio?: string; image?: string; video?: string };
 const attachmentTypes = [
@@ -25,26 +28,44 @@ const attachmentTypes = [
   { field: 'audio', label: '音频', accept: '.mp3,.m4a,.aac,.wav' },
 ] as const;
 
-export default function MessageAttachments({ value, disabled, onChange, onBusy, quick = false }: {
+function AttachmentVideoThumbnail({ src }: { src: string }) {
+  const [ready, setReady] = useState(false);
+
+  return <span className="sg-media-selected__visual sg-media-selected__visual--video" aria-hidden="true">
+    <Video />
+    <video src={src} preload="auto" muted playsInline style={{ visibility: ready ? 'visible' : 'hidden' }}
+      onLoadedMetadata={event => {
+        const video = event.currentTarget;
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && video.duration > 0) {
+          video.currentTime = Math.min(0.05, video.duration / 2);
+        }
+      }}
+      onLoadedData={() => setReady(true)} onSeeked={() => setReady(true)} onError={() => setReady(false)} />
+  </span>;
+}
+
+export default function MessageAttachments({ value, disabled, onChange, onBusy, replyActions }: {
   value: Attachments;
   disabled: boolean;
   onChange: (field: keyof Attachments, reference: string) => void;
   onBusy: (busy: boolean) => void;
-  quick?: boolean;
+  replyActions?: ReactNode;
 }) {
   const [audioBusy, setAudioBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [cameraMode, setCameraMode] = useState<'image' | 'video'>();
   const [recording, setRecording] = useState(false);
+  const [audioOpen, setAudioOpen] = useState(() => Boolean(value.audio));
   const [error, setError] = useState('');
-  const [selected, setSelected] = useState<{ name: string; preview?: string; failed?: boolean }>();
+  const [selected, setSelected] = useState<{ field: keyof Attachments; name: string; preview?: string; failed?: boolean }>();
   const camera = useRef<HTMLVideoElement>(null);
   const mixedMedia = useRef<HTMLInputElement>(null);
   const nativeVideo = useRef<HTMLInputElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localPreview = selected?.preview;
+  const hasAttachment = Boolean(value.image || value.video || value.audio);
 
   useEffect(() => () => { if (localPreview) URL.revokeObjectURL(localPreview); }, [localPreview]);
 
@@ -79,8 +100,9 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
 
   async function uploadFile(field: keyof Attachments, file: Blob, filename?: string) {
     const selection = {
+      field,
       name: file instanceof File ? file.name : filename || '附件',
-      preview: field === 'image' ? URL.createObjectURL(file) : undefined,
+      preview: field === 'image' || field === 'video' ? URL.createObjectURL(file) : undefined,
     };
     setSelected(selection);
     setUploadOpen(false);
@@ -98,7 +120,8 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
   }
 
   function selectMixedFile(file?: File) {
-    if (!file) return;
+    if (!file || locked || hasAttachment) return;
+    setAudioOpen(false);
     if (file.type.startsWith('image/')) {
       void uploadFile('image', file);
       return;
@@ -170,30 +193,36 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
   }
 
   const locked = disabled || audioBusy || uploading || !!cameraMode;
-  if (quick) {
-    return <fieldset className="whisper-quick-attachments" aria-label="添加附件">
-      <div className="whisper-quick-attachments__actions">
-        <button type="button" className="sg-media-action sg-media-action--upload" disabled={locked} onClick={() => mixedMedia.current?.click()}>
-          <span className="sg-media-action__icon"><ImageIcon /></span>
-          <span className="sg-media-action__label">图片 / 视频</span>
+  const pendingVisual = selected?.field === 'video' && selected.preview
+    ? <AttachmentVideoThumbnail key={selected.preview} src={selected.preview} />
+    : <span className="sg-media-selected__visual">
+      {selected?.preview ? <img src={selected.preview} alt="" /> : selected?.failed ? <Upload /> : <LoaderCircle />}
+    </span>;
+  if (replyActions !== undefined) {
+    return <fieldset className="whisper-quick-attachments" aria-label="评论操作">
+      <div className="entries-comment-input-row">
+        <button type="button" className="entries-comment-tool" disabled={locked || hasAttachment}
+          onClick={() => setUploadOpen(open => !open)} aria-expanded={uploadOpen && !hasAttachment}
+          aria-label="添加附件" title="添加附件">
+          <Plus aria-hidden="true" />
         </button>
-        <AudioRecorder
-          disabled={disabled || uploading || !!cameraMode}
-          onChange={audio => onChange('audio', audio)}
-          onError={setError}
-          onBusy={busy => { setAudioBusy(busy); onBusy(busy); }}
-        />
-        <label className="sg-media-action sg-media-action--audio">
-          <span className="sg-media-action__icon"><Music2 /></span>
-          <span className="sg-media-action__label">音频文件</span>
-          <input type="file" accept=".mp3,.m4a,.aac,.wav" disabled={locked}
-            onChange={event => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file) void uploadFile('audio', file);
-            }} />
-        </label>
+        {replyActions}
       </div>
+      {uploadOpen && !hasAttachment && <div className="sg-media-file-picker entries-comment-attachment-menu" role="group" aria-label="选择附件类型">
+        <button type="button" className="sg-media-file-choice sg-media-file-choice--image" disabled={locked} onClick={() => mixedMedia.current?.click()}>
+          <ImageIcon aria-hidden="true" />
+          <span>图片或视频</span>
+        </button>
+        <button type="button" className="sg-media-file-choice sg-media-file-choice--audio" disabled={locked} onClick={() => {
+          setSelected(undefined);
+          setError('');
+          setUploadOpen(false);
+          setAudioOpen(true);
+        }}>
+          <Mic aria-hidden="true" />
+          <span>语音</span>
+        </button>
+      </div>}
       <input ref={mixedMedia} type="file" accept="image/*,video/*" hidden
         onChange={event => {
           const file = event.target.files?.[0];
@@ -201,11 +230,13 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
           selectMixedFile(file);
         }} />
 
+      {audioOpen && (value.audio || (!value.image && !value.video)) && <WhisperAudioBar audio={value.audio || ''} disabled={disabled || uploading} audioBusy={audioBusy}
+        onChange={audio => onChange('audio', audio)} onError={setError}
+        onBusy={busy => { setAudioBusy(busy); onBusy(busy); }} />}
+
       <div className="sg-media-selected-list">
         {selected && <div className={`sg-media-selected sg-media-selected--pending${selected.failed ? ' sg-media-selected--failed' : ''}`} role="status">
-          <span className="sg-media-selected__visual">
-            {selected.preview ? <img src={selected.preview} alt="" /> : selected.failed ? <Upload /> : <LoaderCircle />}
-          </span>
+          {pendingVisual}
           <span className="sg-media-selected__copy">
             <strong>{selected.failed ? '上传未完成' : '正在上传'}</strong>
             <small title={selected.name}>{selected.name}</small>
@@ -231,7 +262,7 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
         {value.video && <div className="sg-media-selected sg-media-selected--expandable">
           <details className="sg-media-selected__details">
             <summary>
-              <span className="sg-media-selected__visual sg-media-selected__visual--video"><Video /></span>
+              <AttachmentVideoThumbnail key={value.video} src={value.video} />
               <span className="sg-media-selected__copy">
                 <strong>视频附件</strong>
                 <small>点击展开播放</small>
@@ -243,23 +274,12 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
           <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除视频" onClick={() => onChange('video', '')}><Trash2 /></button>
         </div>}
 
-        {value.audio && <div className="sg-media-selected sg-media-selected--audio">
-          <div className="sg-media-selected__audio-head">
-            <span className="sg-media-selected__visual sg-media-selected__visual--audio"><AudioLines /></span>
-            <span className="sg-media-selected__copy">
-              <strong>音频附件</strong>
-              <small>点击播放</small>
-            </span>
-          </div>
-          <button type="button" className="sg-media-icon-button" disabled={locked} aria-label="移除音频" onClick={() => onChange('audio', '')}><Trash2 /></button>
-          <div className="sg-media-selected__player"><AudioPlayer src={value.audio} /></div>
-        </div>}
       </div>
       {error && <p role="alert" className="sg-error">{error}</p>}
     </fieldset>;
   }
 
-  return <fieldset className={`sg-media-composer${quick ? ' sg-media-composer--quick' : ' sg-media-composer--editor'}`} aria-label="添加附件">
+  return <fieldset className="sg-media-composer sg-media-composer--editor" aria-label="添加附件">
     <div className="sg-media-action-grid">
       <button
         type="button"
@@ -308,9 +328,7 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
 
     <div className="sg-media-selected-list">
       {selected && <div className={`sg-media-selected sg-media-selected--pending${selected.failed ? ' sg-media-selected--failed' : ''}`} role="status">
-        <span className="sg-media-selected__visual">
-          {selected.preview ? <img src={selected.preview} alt="" /> : selected.failed ? <Upload /> : <LoaderCircle />}
-        </span>
+        {pendingVisual}
         <span className="sg-media-selected__copy">
           <strong>{selected.failed ? '上传未完成' : '正在上传'}</strong>
           <small title={selected.name}>{selected.name}</small>
@@ -339,7 +357,7 @@ export default function MessageAttachments({ value, disabled, onChange, onBusy, 
       {value.video && <div className="sg-media-selected sg-media-selected--expandable">
         <details className="sg-media-selected__details">
           <summary>
-            <span className="sg-media-selected__visual sg-media-selected__visual--video"><Video /></span>
+            <AttachmentVideoThumbnail key={value.video} src={value.video} />
             <span className="sg-media-selected__copy">
               <strong>视频附件</strong>
               <small>点击展开播放</small>

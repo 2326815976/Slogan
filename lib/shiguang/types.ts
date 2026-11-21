@@ -34,12 +34,14 @@ export interface ShiguangSpace {
 }
 export interface Entry {
   id: string; kind: EntryKind; payload: EntryPayload; createdBy: string; createdAt: string;
-  updatedAt: string; moodDate: string | null; version: number;
+  updatedAt: string; moodDate: string | null; version: number; replyCount?: number;
 }
 export interface Reply { id: string; entryId: string; content: string; audio?: string; image?: string; video?: string; createdBy: string; createdAt: string; version: number }
+export type ReplyPage = PageResult<Reply> & { replyCount?: number };
 export interface Prize {
   id: string; name: string; content: string; image: string; providerId: string; drawerId: string; createdAt: string; version: number;
 }
+export type PrizeSummary = Pick<Prize, 'id' | 'name' | 'providerId'>;
 export interface GiftCard {
   id: string; name: string; content: string; image: string; providerId: string; holderId: string; createdAt: string; version: number;
 }

@@ -12,11 +12,12 @@ export async function spaceRequest<T>(path = '', method = 'GET', body?: unknown)
   if (!response.ok) throw new SpaceRequestError(typeof result.error === 'string' ? result.error : '请求失败，请重试', response.status);
   return result.data as T;
 }
-export async function uploadSpaceMedia(file: Blob, admin = false, filename = 'recording.webm', attachment = false): Promise<string> {
+export async function uploadSpaceMedia(file: Blob, admin = false, filename = 'recording.webm', attachment = false, { thumbnail = false } = {}): Promise<string> {
   const form = new FormData();
   form.append('file', file, file instanceof File ? file.name : filename);
   if (admin) form.append('purpose', 'admin');
   if (attachment) form.append('attachment', '1');
+  if (thumbnail) form.append('thumbnail', '1');
   const response = await fetch('/api/shiguang/media', { method: 'POST', body: form });
   const result = await response.json().catch(() => null);
   if (!response.ok) throw new Error(typeof result?.error === 'string' && result.error ? result.error : response.status === 413 ? '文件过大' : `上传失败（${response.status}）`);

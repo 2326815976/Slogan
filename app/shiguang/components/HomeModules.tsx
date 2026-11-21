@@ -38,20 +38,20 @@ function PromiseIcon() {
   </svg>;
 }
 
-function Card({ kind, label, icon, controls, children }: {
+function Card({ kind, label, icon, href, children }: {
   kind: string;
   label: string;
   icon: ReactNode;
-  controls?: ReactNode;
+  href?: string;
   children: ReactNode;
 }) {
-  return <section className={`${styles.card} ${styles[kind] ?? ''}`}>
+  return <section className={`${styles.card} ${styles[kind] ?? ''}${href ? ` ${styles.cardLinked}` : ''}`}>
+    {href && <Link href={href} className={styles.cardLink} aria-label={`进入${label}`} />}
     <header className={styles.cardHeader}>
       <h2 className={styles.heading}>
-        <Link href={`/shiguang/${kind}`}><span className={styles.icon} aria-hidden="true">{icon}</span>{label}</Link>
+        <span className={styles.icon} aria-hidden="true">{icon}</span>{label}
       </h2>
-      {controls}
-      <span className={styles.enter} aria-hidden="true">进入 <ChevronRight /></span>
+      {href && <span className={styles.enter} aria-hidden="true"><ChevronRight /></span>}
     </header>
     {children}
   </section>;
@@ -64,7 +64,6 @@ export default function HomeModules({ userId, balance, members }: {
 }) {
   const [data, setData] = useState<PreviewData>({});
   const [loaded, setLoaded] = useState(false);
-  const [mine, setMine] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -91,17 +90,18 @@ export default function HomeModules({ userId, balance, members }: {
     fulfilled: entry.payload.status === 'fulfilled',
   }));
   const promises = data.promises?.items.slice(0, 3) ?? [];
-  const whisper = data.whispers?.items.find(entry => !mine || entry.createdBy === userId);
+  const whispers = data.whispers?.items.slice(0, 2) ?? [];
   const wishCount = pageCount(data.wishes);
   const fulfilledCount = pageCount(data.wishes, data.wishes?.items.filter(entry => entry.payload.status === 'fulfilled').length);
   const promiseCount = pageCount(data.promises);
+  const whisperCount = pageCount(data.whispers);
   const ticketCount = pageCount(data.tickets, data.tickets?.items.filter(ticket => ticket.holderId === userId).length);
-  const empty = (result: unknown, label: string) => !loaded ? '加载中…' : result ? label : '暂时无法加载';
+  const empty = (result: unknown, label: string) => result ? label : '暂时无法加载';
 
   return <div className={styles.modules}>
-    <Card kind="wish" label="许愿池" icon={<WishIcon />}>
+    <Card kind="wish" label="许愿池" icon={<WishIcon />} href="/shiguang/wish">
       <div className={styles.previewBody}>
-        {wishes.length ? <ul className={styles.previewList}>
+        {!loaded ? <p className={styles.previewLoading} role="status">加载中...</p> : wishes.length ? <ul className={styles.previewList}>
           {wishes.map(wish => <li key={wish.id} className={wish.fulfilled ? styles.fulfilled : ''}>
             <span className={styles.check} aria-hidden="true">{wish.fulfilled ? '✓' : ''}</span>
             <span className={styles.wishName}>{wish.name}</span>
@@ -113,9 +113,9 @@ export default function HomeModules({ userId, balance, members }: {
         <span>· 已实现 <strong>{fulfilledCount}</strong> 个</span>
       </p>}
     </Card>
-    <Card kind="promise" label="心约" icon={<PromiseIcon />}>
-      <div className={`${styles.previewBody}${promises.length ? '' : ` ${styles.promiseEmpty}`}`}>
-        {promises.length ? <ul className={styles.previewList}>
+    <Card kind="promise" label="心约" icon={<PromiseIcon />} href="/shiguang/promise">
+      <div className={`${styles.previewBody}${loaded && !promises.length ? ` ${styles.promiseEmpty}` : ''}`}>
+        {!loaded ? <p className={styles.previewLoading} role="status">加载中...</p> : promises.length ? <ul className={styles.previewList}>
           {promises.map(({ id, payload }) => <li key={id}><span className={styles.promiseName}>{payload.title || payload.name || '一条心约'}</span></li>)}
         </ul> : <>
           <Heart aria-hidden="true" />
@@ -124,24 +124,32 @@ export default function HomeModules({ userId, balance, members }: {
       </div>
       {promiseCount !== undefined && <p className={styles.previewSummary}><span>共 <strong>{promiseCount}</strong> 条心约</span></p>}
     </Card>
-    <Card kind="whisper" label="絮语" icon={<MessageCircleMore />} controls={
-      <div className={styles.tabs} role="group" aria-label="絮语筛选">
-        <button type="button" aria-pressed={!mine} onClick={() => setMine(false)}>最新</button>
-        <button type="button" aria-pressed={mine} onClick={() => setMine(true)}>我的</button>
-      </div>
-    }>
-      {whisper ? <WhisperPreview key={whisper.id} entry={whisper} author={members.find(member => member.userId === whisper.createdBy)?.name || '成员'} /> :
-        <div className={styles.whisperPreview}><p className={styles.whisperEmpty}>{empty(data.whispers, mine ? '近期没有我的絮语' : '还没有絮语')}</p></div>}
+    <Card kind="whisper" label="絮语" icon={<MessageCircleMore />} href="/shiguang/whisper">
+      {!loaded ? <p className={styles.previewLoading} role="status">加载中...</p> : whispers.length ? <div className={styles.whisperList}>
+        {whispers.map(whisper => <WhisperPreview key={whisper.id} entry={whisper}
+          author={members.find(member => member.userId === whisper.createdBy)?.name || '成员'} />)}
+      </div> :
+        <div className={styles.whisperPreview}><p className={styles.whisperEmpty}>{empty(data.whispers, '还没有絮语')}</p></div>}
+      {whisperCount !== undefined && <p className={styles.previewSummary}><span>共 <strong>{whisperCount}</strong> 条絮语</span></p>}
     </Card>
     <Card kind="tickets" label="心意奖券" icon={<Ticket />}>
       <div className={styles.ticketActions}>
         <Link href="/shiguang/tickets" className={styles.ticketAction}>
           <span className={styles.wheel} aria-hidden="true">♥</span>
-          <span><strong>转盘抽奖</strong><span className={styles.meta}>剩余 {balance} 次</span><span className={styles.ticketButton}>去抽奖 ›</span></span>
+          <span className={styles.ticketCopy}>
+            <strong>转盘抽奖</strong>
+            <span className={styles.meta}>{loaded ? `剩余 ${balance} 次` : '加载中...'}</span>
+          </span>
+          <span className={styles.enter} aria-hidden="true"><ChevronRight /></span>
         </Link>
         <Link href="/shiguang/tickets#sg-my-tickets" className={styles.ticketAction}>
           <span className={styles.ticketArt} aria-hidden="true"><Ticket /><Heart /></span>
-          <span><strong>我的卡券</strong>{ticketCount !== undefined && <span className={styles.meta}>已获得 {ticketCount} 张</span>}<span className={styles.ticketButton}>查看卡券 ›</span></span>
+          <span className={styles.ticketCopy}>
+            <strong>我的卡券</strong>
+            {ticketCount !== undefined ? <span className={styles.meta}>已获得 <strong className={styles.ticketCount}>{ticketCount}</strong> 张</span> :
+              !loaded && <span className={styles.meta}>加载中...</span>}
+          </span>
+          <span className={styles.enter} aria-hidden="true"><ChevronRight /></span>
         </Link>
       </div>
     </Card>

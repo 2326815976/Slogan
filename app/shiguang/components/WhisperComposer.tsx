@@ -1,12 +1,12 @@
 'use client';
 
-import { LoaderCircle, Pause, Play, Plus, Trash2, Video, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { LoaderCircle, Play, Plus, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { spaceRequest, uploadSpaceMedia } from '@/lib/shiguang/client';
-import { extractTopics, firstTopic } from '@/lib/shiguang/topics';
-import type { EntryMedia } from '@/lib/shiguang/types';
-import AudioPlayer, { type AudioPlayerHandle } from './AudioPlayer';
-import AudioRecorder from './AudioRecorder';
+import { extractTopics, firstTopic, topicSegments } from '@/lib/shiguang/topics';
+import type { Entry, EntryMedia, EntryPayload } from '@/lib/shiguang/types';
+import WhisperAudioBar from './WhisperAudioBar';
+import WhisperVideoDialog from './WhisperVideoDialog';
 
 type DraftMedia = EntryMedia & {
   id: string;
@@ -14,32 +14,76 @@ type DraftMedia = EntryMedia & {
   uploading: boolean;
   failed: boolean;
 };
-const recordingWaveBars = [8, 14, 22, 12, 26, 17, 10, 24, 31, 19, 11, 28, 16, 23, 10, 29, 18, 13, 25, 8, 20, 14, 27, 11];
 
-export default function WhisperComposer({ disabled = false, onPublished }: {
+function initialMedia(payload?: EntryPayload): DraftMedia[] {
+  const seen = new Set<string>();
+  const items: EntryMedia[] = [
+    ...(payload?.media || []),
+    ...(payload?.image ? [{ type: 'image' as const, reference: payload.image }] : []),
+    ...(payload?.video ? [{ type: 'video' as const, reference: payload.video }] : []),
+  ];
+  return items.flatMap(({ type, reference }) => {
+    const id = `${type}:${reference}`;
+    if (!reference || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, type, reference, preview: reference, uploading: false, failed: false }];
+  }).slice(0, 3);
+}
+
+function VideoThumbnail({ src, disabled, onPlay }: { src: string; disabled: boolean; onPlay: () => void }) {
+  const [duration, setDuration] = useState('');
+
+  return <>
+    <video src={`${src}#t=0.001`} muted playsInline preload="metadata" aria-hidden="true"
+      onLoadedMetadata={event => {
+        const length = event.currentTarget.duration;
+        if (!Number.isFinite(length) || length <= 0) return;
+        const seconds = Math.max(1, Math.round(length));
+        setDuration(`${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
+      }} />
+    <button type="button" className="whisper-media-slot__video compact-button" aria-label="播放视频" aria-haspopup="dialog"
+      disabled={disabled} onClick={onPlay}>
+      <Play fill="currentColor" aria-hidden="true" />
+    </button>
+    {duration && <span className="whisper-media-slot__duration">{duration}</span>}
+  </>;
+}
+
+export default function WhisperComposer({ disabled = false, entry, onCancel, onSaved }: {
   disabled?: boolean;
-  onPublished: () => Promise<void>;
+  entry?: Entry;
+  onCancel?: () => void;
+  onSaved: () => Promise<void>;
 }) {
+  const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
+  const editorHighlight = useRef<HTMLDivElement>(null);
   const mediaInput = useRef<HTMLInputElement>(null);
-  const audioInput = useRef<HTMLInputElement>(null);
-  const audioPlayer = useRef<AudioPlayerHandle>(null);
-  const [content, setContent] = useState('');
-  const [media, setMedia] = useState<DraftMedia[]>([]);
-  const [audio, setAudio] = useState('');
+  const previewUrls = useRef(new Set<string>());
+  const [content, setContent] = useState(entry?.payload.content ?? entry?.payload.description ?? entry?.payload.title ?? '');
+  const [media, setMedia] = useState(() => initialMedia(entry?.payload));
+  const [audio, setAudio] = useState(entry?.payload.audio || '');
   const [audioBusy, setAudioBusy] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState('00:00');
-  const [audioPlaying, setAudioPlaying] = useState(false);
-  const [audioDuration, setAudioDuration] = useState('00:00');
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [videoPreview, setVideoPreview] = useState('');
   const locked = disabled || busy || uploading || audioBusy;
   const topics = extractTopics(content);
   const validMedia = media.filter(item => item.reference && !item.uploading && !item.failed);
   const hasPayload = Boolean(content.trim() || audio || validMedia.length);
+
+  useEffect(() => {
+    const previews = previewUrls.current;
+    return () => previews.forEach(preview => URL.revokeObjectURL(preview));
+  }, []);
+
+  useEffect(() => {
+    if (!entry) return;
+    dialog.current?.showModal();
+    editor.current?.focus();
+  }, [entry]);
 
   function openComposer() {
     if (disabled) return;
@@ -55,17 +99,9 @@ export default function WhisperComposer({ disabled = false, onPublished }: {
 
   function removeMedia(id: string) {
     if (locked) return;
-    setMedia(current => {
-      const target = current.find(item => item.id === id);
-      if (target?.preview) URL.revokeObjectURL(target.preview);
-      return current.filter(item => item.id !== id);
-    });
-  }
-
-  function replaceAudio(reference: string) {
-    setAudio(reference);
-    setAudioPlaying(false);
-    setAudioDuration('00:00');
+    const target = media.find(item => item.id === id);
+    if (target && previewUrls.current.delete(target.preview)) URL.revokeObjectURL(target.preview);
+    setMedia(current => current.filter(item => item.id !== id));
   }
 
   async function addMedia(files: FileList | null) {
@@ -79,11 +115,13 @@ export default function WhisperComposer({ disabled = false, onPublished }: {
         setError('仅支持图片或视频');
         continue;
       }
+      const preview = URL.createObjectURL(file);
+      previewUrls.current.add(preview);
       const draft: DraftMedia = {
         id: crypto.randomUUID(),
         type,
         reference: '',
-        preview: URL.createObjectURL(file),
+        preview,
         uploading: true,
         failed: false,
       };
@@ -99,20 +137,7 @@ export default function WhisperComposer({ disabled = false, onPublished }: {
     setUploading(false);
   }
 
-  async function uploadAudio(file?: File) {
-    if (!file || locked) return;
-    setAudioBusy(true);
-    setError('');
-    try {
-      replaceAudio(await uploadSpaceMedia(file, false, file.name, true));
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setAudioBusy(false);
-    }
-  }
-
-  async function publish() {
+  async function save() {
     if (!hasPayload || locked) return;
     setBusy(true);
     setError('');
@@ -124,13 +149,16 @@ export default function WhisperComposer({ disabled = false, onPublished }: {
         media: validMedia.map(({ type, reference }) => ({ type, reference })),
         type: audio ? 'audio' as const : 'text' as const,
       };
-      await spaceRequest('/whisper', 'POST', { id: crypto.randomUUID(), payload });
-      media.forEach(item => URL.revokeObjectURL(item.preview));
+      await spaceRequest(entry ? `/whisper/${entry.id}` : '/whisper', entry ? 'PUT' : 'POST', {
+        id: entry?.id || crypto.randomUUID(), payload, version: entry?.version,
+      });
+      previewUrls.current.forEach(preview => URL.revokeObjectURL(preview));
+      previewUrls.current.clear();
       setContent('');
       setMedia([]);
       setAudio('');
       dialog.current?.close();
-      await onPublished();
+      await onSaved();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -139,35 +167,47 @@ export default function WhisperComposer({ disabled = false, onPublished }: {
   }
 
   return <>
-    <button type="button" className="whisper-publish-fab" disabled={disabled} onClick={openComposer}
+    {!entry && <button type="button" className="whisper-publish-fab" disabled={disabled} onClick={openComposer}
       aria-label="发表絮语" aria-haspopup="dialog">
       <Plus aria-hidden="true" />
-    </button>
+    </button>}
 
-    <dialog ref={dialog} className="whisper-publish-dialog" aria-labelledby="whisper-publish-title"
+    <dialog ref={dialog} className="whisper-publish-dialog" aria-labelledby={titleId} onClose={onCancel}
       onCancel={event => { if (locked) event.preventDefault(); }}>
-      <form className="whisper-publish-form" onSubmit={event => { event.preventDefault(); void publish(); }}>
+      <form className="whisper-publish-form" onSubmit={event => { event.preventDefault(); void save(); }}>
         <header className="whisper-publish-header">
-          <h2 id="whisper-publish-title">发表絮语</h2>
+          <h2 id={titleId}>{entry ? '编辑絮语' : '发表絮语'}</h2>
           <button type="button" disabled={locked} onClick={closeComposer} aria-label="关闭"><X aria-hidden="true" /></button>
         </header>
 
-        <textarea ref={editor} className="whisper-publish-input" rows={5} maxLength={10000} value={content}
-          disabled={busy} placeholder="写点什么…" aria-label="絮语正文"
-          onChange={event => setContent(event.target.value)} />
-
-        {topics.length > 0 && <div className="whisper-publish-topics">
-          {topics.map(topic => <span key={topic}>#{topic}</span>)}
-        </div>}
+        <div className="whisper-publish-content">
+          <div className="whisper-publish-editor">
+            <div ref={editorHighlight} className="whisper-publish-highlight" aria-hidden="true">
+              {topicSegments(content, true).map((segment, index) => segment.topic
+                ? <span key={index} className="whisper-publish-highlight__topic">{segment.text}</span>
+                : segment.text)}
+              {content.endsWith('\n') && '\u200b'}
+            </div>
+            <textarea ref={editor} className="whisper-publish-input" rows={5} maxLength={10000} value={content}
+              disabled={busy} placeholder="写点什么…" aria-label="絮语正文"
+              onChange={event => setContent(event.target.value)}
+              onScroll={event => {
+                if (editorHighlight.current) editorHighlight.current.scrollTop = event.currentTarget.scrollTop;
+              }} />
+          </div>
+          {topics.length > 0 && <div className="whisper-publish-topics">
+            {topics.map(topic => <span key={topic}>#{topic}</span>)}
+          </div>}
+        </div>
 
         <div className="whisper-media-grid">
           {media.map(item => <div key={item.id} className={`whisper-media-slot${item.failed ? ' whisper-media-slot--failed' : ''}`}>
             {item.type === 'image'
               ? <img src={item.preview} alt="" />
-              : <><video src={item.preview} muted playsInline preload="metadata" /><span className="whisper-media-slot__video"><Video /></span></>}
+              : <VideoThumbnail src={item.preview} disabled={locked} onPlay={() => setVideoPreview(item.preview)} />}
             {item.uploading && <span className="whisper-media-slot__loading"><LoaderCircle /></span>}
             <button type="button" className="whisper-media-slot__remove" disabled={locked} onClick={() => removeMedia(item.id)} aria-label="移除媒体">
-              <Trash2 />
+              <X />
             </button>
           </div>)}
           {media.length < 3 && <button type="button" className="whisper-media-add" disabled={locked}
@@ -182,49 +222,18 @@ export default function WhisperComposer({ disabled = false, onPublished }: {
             void addMedia(files);
           }} />
 
-        <div className="whisper-audio-bar">
-          {audio
-            ? <button type="button" className="whisper-audio-bar__play-button" disabled={locked}
-              onClick={() => audioPlayer.current?.toggle()} aria-label={audioPlaying ? '暂停录音' : '播放录音'}>
-              {audioPlaying ? <Pause /> : <Play />}
-            </button>
-            : <AudioRecorder disabled={busy || uploading} onChange={replaceAudio} onError={setError} onBusy={setAudioBusy}
-              onRecordingChange={setRecording} onDuration={setRecordingDuration} />}
-          <div className="whisper-audio-bar__main">
-            {audio && <span className="whisper-audio-bar__player-source">
-              <AudioPlayer ref={audioPlayer} src={audio} hideControl embedded
-                onPlayingChange={setAudioPlaying} onDurationChange={setAudioDuration} />
-            </span>}
-            <div className={`whisper-audio-bar__preview${recording || audioPlaying ? ' whisper-audio-bar__preview--active' : ''}`}>
-              <span className="whisper-audio-bar__wave" aria-hidden="true">
-                {recordingWaveBars.map((height, index) => <span key={index} style={{ height }} />)}
-              </span>
-              <span className="whisper-audio-bar__duration">
-                {recording ? recordingDuration : audio ? audioDuration : '00:00'}
-              </span>
-            </div>
-          </div>
-          {audio
-            ? <button type="button" className="whisper-audio-bar__clear" disabled={locked}
-              onClick={() => { setAudio(''); setAudioPlaying(false); setAudioDuration('00:00'); }}>×</button>
-            : <button type="button" className="whisper-audio-bar__upload" disabled={locked}
-              onClick={() => audioInput.current?.click()} aria-label="上传录音"><Plus /></button>}
-          <input ref={audioInput} type="file" accept=".mp3,.m4a,.aac,.wav,audio/*" hidden
-            onChange={event => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              void uploadAudio(file);
-            }} />
-        </div>
+        <WhisperAudioBar audio={audio} disabled={disabled || busy || uploading} audioBusy={audioBusy}
+          onChange={setAudio} onBusy={setAudioBusy} onError={setError} />
 
         {error && <p className="whisper-publish-error" role="alert">{error}</p>}
 
         <footer className="whisper-publish-actions">
           <button className="whisper-publish-submit" disabled={locked || !hasPayload}>
-            {busy ? '发布中…' : '发布絮语'}
+            {entry ? (busy ? '保存中…' : '保存') : (busy ? '发布中…' : '发布絮语')}
           </button>
         </footer>
       </form>
     </dialog>
+    {videoPreview && <WhisperVideoDialog src={videoPreview} onClose={() => setVideoPreview('')} />}
   </>;
 }

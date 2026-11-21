@@ -7,7 +7,13 @@ import { extractTopics, firstTopic } from '@/lib/shiguang/topics';
 import MessageAttachments from './MessageAttachments';
 import OptionalSection from './OptionalSection';
 
-export default function EntryForm({ kind, entry, onSaved, onCancel }: { kind: EntryKind; entry?: Entry; onSaved: () => Promise<void>; onCancel: () => void }) {
+export default function EntryForm({ kind, entry, onSaved, onDelete, onCancel }: {
+  kind: EntryKind;
+  entry?: Entry;
+  onSaved: () => Promise<void>;
+  onDelete?: () => void | Promise<void>;
+  onCancel: () => void;
+}) {
   const [payload, setPayload] = useState<EntryPayload>(() => {
     const initial = entry?.payload || { direction: 'up', status: 'pending' };
     if (kind !== 'whisper') return initial;
@@ -63,7 +69,6 @@ export default function EntryForm({ kind, entry, onSaved, onCancel }: { kind: En
       <OptionalSection key={`mood-${id}`} label="描述（选填）" filled={Boolean(payload.description)}>
         {field('description', '描述', 'textarea', 1000, false)}
       </OptionalSection>
-      <p className="sg-muted">每天一条，以北京时间为准，只能修改当天的记录。</p>
     </>}
     {error && <p className="sg-error" role="alert">{error}</p>}
     {kind === 'whisper'
@@ -71,6 +76,11 @@ export default function EntryForm({ kind, entry, onSaved, onCancel }: { kind: En
         <button type="button" disabled={busy || uploading} className="sg-link sg-whisper-cancel" onClick={onCancel}>取消</button>
         <button className="sg-button sg-whisper-save" disabled={busy || uploading}>{busy || uploading ? '处理中…' : '保存'}</button>
       </div>
-      : <div className="sg-actions"><button className="sg-button" disabled={busy || uploading}>{busy || uploading ? '处理中…' : '保存'}</button><button type="button" disabled={busy || uploading} className="sg-link" onClick={onCancel}>取消</button></div>}
+      : <div className="sg-actions">
+        <button className="sg-button" disabled={busy || uploading}>{busy || uploading ? '处理中…' : '保存'}</button>
+        {entry && kind === 'anniversary' && onDelete
+          ? <button type="button" disabled={busy || uploading} className="sg-link sg-danger" onClick={() => void onDelete()}>删除</button>
+          : <button type="button" disabled={busy || uploading} className="sg-link" onClick={onCancel}>取消</button>}
+      </div>}
   </form>;
 }

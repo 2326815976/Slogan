@@ -61,7 +61,7 @@ export default function SecondaryPageHeader({
           </button>
           <div className="min-w-0 flex-1">
             <h1
-              className="truncate text-2xl font-bold leading-none text-[#5D4037]"
+              className="truncate text-2xl font-bold leading-tight text-[#5D4037]"
               style={{ fontFamily: "'ZQKNNY', cursive" }}
             >
               {title}
@@ -95,7 +95,7 @@ export default function SecondaryPageHeader({
 
         <div className="mx-auto flex max-w-md flex-col items-center text-center">
           <h1
-            className="text-3xl font-bold text-[#5D4037]"
+            className="text-3xl font-bold leading-tight text-[#5D4037]"
             style={{ fontFamily: "'ZQKNNY', cursive" }}
           >
             {title}

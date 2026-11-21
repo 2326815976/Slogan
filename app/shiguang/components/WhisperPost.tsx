@@ -1,11 +1,11 @@
 'use client';
 
-import { ChevronDown, MessageCircle, Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, MessageSquare, Pencil, Trash2 } from 'lucide-react';
 import { displayMinute } from '@/lib/shiguang/client';
 import type { Entry } from '@/lib/shiguang/types';
-import AudioPlayer from './AudioPlayer';
 import Replies from './Replies';
-import TopicText from './TopicText';
+import WhisperMedia from './WhisperMedia';
+import WhisperPostText from './WhisperPostText';
 
 export default function WhisperPost({
   entry,
@@ -14,7 +14,10 @@ export default function WhisperPost({
   canManage,
   busy,
   expanded,
+  repliesLocked,
   onToggleReplies,
+  onReplyCountChange,
+  onReplyMutation,
   onTopicClick,
   onEdit,
   onDelete,
@@ -25,12 +28,16 @@ export default function WhisperPost({
   canManage: boolean;
   busy: boolean;
   expanded: boolean;
+  repliesLocked: boolean;
   onToggleReplies: () => void;
+  onReplyCountChange: (entryId: string, replyCount: number) => void;
+  onReplyMutation: (updating: boolean) => void;
   onTopicClick?: (topic: string) => void;
   onEdit: () => void;
   onDelete: () => Promise<void>;
 }) {
   const content = String(entry.payload.content || entry.payload.description || entry.payload.title || '').trim();
+  const replyCount = entry.replyCount ?? 0;
   const initial = authorName.slice(0, 1) || '成';
   const mediaSeen = new Set<string>();
   const media = [
@@ -61,30 +68,19 @@ export default function WhisperPost({
       </div>}
     </header>
 
-    {content && <div className="entries-post-body"><p className="entries-post-text"><TopicText content={content} onTopicClick={onTopicClick} /></p></div>}
+    {content && <WhisperPostText key={content} content={content} onTopicClick={onTopicClick} />}
 
-    {(media.length > 0 || entry.payload.audio) && <div className="entries-post-media entries-whisper-media">
-      {media.map((item, index) => item.type === 'image' ? <a key={`${item.reference}-${index}`} className="entries-whisper-media__tile" href={item.reference} target="_blank" rel="noreferrer" aria-label="查看原图">
-        <img src={`${item.reference}?variant=preview`} alt="絮语图片" loading="lazy" onError={event => {
-          const image = event.currentTarget;
-          if (image.getAttribute('src') !== item.reference) image.src = item.reference;
-        }} />
-      </a> : <div key={`${item.reference}-${index}`} className="entries-whisper-media__tile entries-whisper-media__tile--video entries-whisper-media__video-frame">
-        <video className="entries-whisper-media__video" src={item.reference} controls playsInline preload="metadata"
-          controlsList="nodownload noremoteplayback" disablePictureInPicture disableRemotePlayback />
-      </div>)}
-      {entry.payload.audio && <div className="entries-whisper-media__audio"><AudioPlayer src={entry.payload.audio} variant="progress" /></div>}
-    </div>}
+    <WhisperMedia media={media} audio={entry.payload.audio} />
 
     <footer className="entries-post-footer">
-      <button type="button" className="entries-post-reply" aria-expanded={expanded} onClick={onToggleReplies}>
-        <MessageCircle aria-hidden="true" />
-        <span>{expanded ? '收起评论' : '评论'}</span>
+      <button type="button" className="entries-post-reply" aria-expanded={expanded} disabled={repliesLocked} onClick={onToggleReplies}>
+        <MessageSquare aria-hidden="true" />
+        <span>{expanded ? '收起评论' : entry.replyCount === 0 ? '写评论' : '评论'}</span>
+        {replyCount > 0 && <span className="entries-post-reply__count" aria-label={`${replyCount} 条评论`}>{replyCount}</span>}
         <ChevronDown className="entries-post-reply__chevron" aria-hidden="true" />
       </button>
+    {expanded && <Replies entryId={entry.id} onReplyCountChange={onReplyCountChange} onReplyMutation={onReplyMutation} />}
     </footer>
-
-    {expanded && <Replies entryId={entry.id} />}
     </article>
   </>;
 }
